@@ -1,6 +1,6 @@
 import { createClient } from "@libsql/client";
 
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 const TIMEOUT_MS = 7000;
 const USER_AGENT = `AdiLyrics/${VERSION} (https://github.com/adidotzip/lyrics)`;
 
@@ -244,6 +244,28 @@ function titleArtistScore(result, input) {
   return score;
 }
 
+// Provider metadata must be checked before choosing lyrics. Missing metadata is not
+// proof of a match, and must not be filled from the request before this check.
+function isPlausibleLyricsMatch(result, input) {
+  if (!input.track || !input.artist) return true;
+  const norm = normalizedKey;
+  const wantedTitle = norm(input.track);
+  const wantedArtist = norm(input.artist);
+  const title = norm(result.track || "");
+  const artist = norm(result.artist || "");
+  if (!title || !artist) return false;
+  if (!(title === wantedTitle || title.includes(wantedTitle) || wantedTitle.includes(title))) return false;
+  if (!(artist === wantedArtist || artist.includes(wantedArtist) || wantedArtist.includes(artist))) return false;
+  if (input.album && result.album) {
+    const wantedAlbum = norm(input.album);
+    const album = norm(result.album);
+    if (!(album === wantedAlbum || album.includes(wantedAlbum) || wantedAlbum.includes(album))) return false;
+  }
+  if (input.duration != null && result.duration != null &&
+      Math.abs(Number(input.duration) - Number(result.duration)) > 20) return false;
+  return true;
+}
+
 const providers = [
   { id: "lrclib", async search(input) {
     if (input.track && input.artist && input.duration != null) {
@@ -282,9 +304,10 @@ const providers = [
     const ttml = firstString(data?.ttml,
       typeof data?.lyrics === "string" && /<tt\b/i.test(data.lyrics) ? data.lyrics : null);
     if (!ttml) return [];
-    return normalizeMany({ ...data, ttml, trackName: input.track || data.trackName || data.title || song,
-      artistName: input.artist || data.artistName || data.artist,
-      albumName: input.album || data.albumName || data.album }, "betterlyrics").map(item => ({
+    return normalizeMany({ ...data, ttml,
+      trackName: data.trackName || data.track_name || data.title || data.song,
+      artistName: data.artistName || data.artist_name || data.artist,
+      albumName: data.albumName || data.album_name || data.album }, "betterlyrics").map(item => ({
         ...item, confidence: typeof data.score === "number" ? data.score : null
       }));
   }},
@@ -308,8 +331,9 @@ const providers = [
       }
     } else return [];
     if (exact?.success && exact.data?.lyrics) {
-      return normalizeMany({ ...exact.data, trackName: exact.data.song, artistName: exact.data.artist,
-        albumName: exact.data.album, lyrics: exact.data.lyrics }, "unison", exact.data.format)
+      return normalizeMany({ ...exact.data, trackName: exact.data.song || exact.data.track || exact.data.title,
+        artistName: exact.data.artist || exact.data.artistName, albumName: exact.data.album || exact.data.albumName,
+        lyrics: exact.data.lyrics }, "unison", exact.data.format)
         .map(item => ({ ...item, confidence: exact.data.confidence || null,
           matchScore: exact.data.matchScore ?? exact.data.effectiveScore ?? exact.data.score ?? null }));
     }
@@ -630,7 +654,7 @@ async function readSyllableCache(input, requestedProvider) {
     const row = result.rows?.[0];
     if (!row || (requestedProvider && String(row.provider) !== requestedProvider)) return null;
     const lyrics = JSON.parse(String(row.lyrics_json));
-    if (!hasSyllableSync(lyrics)) return null;
+    if (!hasSyllableSync(lyrics) || !isPlausibleLyricsMatch(lyrics, input)) return null;
     return lyrics;
   } catch (error) {
     console.warn("Turso syllable cache read failed:", error?.message || "unknown error");
@@ -1008,8 +1032,8 @@ async function handle(req) {
         retryAfter: r.reason?.retryAfter || null });
   let results = dedupe(settled.flatMap(r => r.status === "fulfilled" ? r.value.results : []));
   results = results.map(result => ({ ...result, matchScore: titleArtistScore(result, input) }));
-  // Metadata mismatches are excluded when the caller provides both title and artist.
-  if (track && artist) results = results.filter(result => result.matchScore >= 0);
+  // Require a real title/artist match. Do not let same-artist search fallbacks win.
+  if (track && artist) results = results.filter(result => isPlausibleLyricsMatch(result, input));
   // Popcat is deliberately last-resort, after matching has rejected any wrong-track results.
   if (!results.length && !provider) {
     try {
@@ -1019,7 +1043,7 @@ async function handle(req) {
     } catch {
       statuses = [...statuses, { provider: "popcat", ok: false, error: "unavailable", fallback: true }];
     }
-    if (track && artist) results = results.filter(result => result.matchScore >= 0);
+    if (track && artist) results = results.filter(result => isPlausibleLyricsMatch(result, input));
   }
   const preferenceBonus = result => prefer === "best" ? 0 :
     prefer === "word" ? (result.syncLevel === "word" ? 2.5 : result.syncLevel === "line" ? 0.5 : 0) :
