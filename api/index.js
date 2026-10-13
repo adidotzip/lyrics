@@ -836,11 +836,28 @@ async function searchItunesCatalog(term, type = "all", country = "US", limit = 2
     else if (type !== "artist" && artist.includes(normalizedTerm)) score += 6;
     return score;
   };
-  const ranked = rawResults.map(item => ({ item, score: scoreItem(item) }))
+  const ranked = rawResults.map(item => ({ item, score: scoreItem(item), normalized: normalizeItunesCatalogItem(item) }))
     .filter(entry => entry.score > 0)
     .sort((a, b) => b.score - a.score);
-  const results = ranked.slice(0, Math.max(1, Math.min(50, limit)))
-    .map(entry => normalizeItunesCatalogItem(entry.item)).filter(Boolean);
+
+  // Artist search is especially prone to unrelated near-matches. Only return
+  // the exact artist name when the caller explicitly requests type=artist.
+  const filtered = type === "artist"
+    ? ranked.filter(entry => normalizedKey(entry.normalized?.artist || "") === normalizedTerm)
+    : ranked;
+  const results = filtered.slice(0, Math.max(1, Math.min(50, limit)))
+    .map(entry => {
+      const item = entry.normalized;
+      if (type === "artist" && item?.artistId) {
+        const slug = normalizedKey(item.artist).replace(/\\s+/g, "-");
+        return {
+          ...item,
+          artistUrl: firstString(item.artistUrl, `https://music.apple.com/${country.toLowerCase()}/artist/${slug}/${item.artistId}`),
+          albumsEndpoint: `/api/music/artist?id=${item.artistId}&country=${country}`
+        };
+      }
+      return item;
+    }).filter(Boolean);
   return { resultCount: results.length, results };
 }
 async function lookupItunesCatalog(id, entity = "", country = "US", limit = 50) {
