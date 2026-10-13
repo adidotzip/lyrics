@@ -1,4 +1,4 @@
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 const TIMEOUT_MS = 7000;
 const USER_AGENT = `AdiLyrics/${VERSION} (https://github.com/adidotzip/lyrics)`;
 
