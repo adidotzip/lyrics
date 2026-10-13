@@ -76,7 +76,7 @@ Fields that a provider does not supply are omitted or set to `null`. `syncLevel`
 
 - Title, artist, album and duration metadata affect ranking; explicit metadata mismatches are filtered when title and artist are provided.
 - Word/syllable timing is a preference, not proof that the lyrics are correct.
-- LRCLIB's `hasWordSync` indicates word-level timings are available in `lyricsfile`; its basic `syncedLyrics` field is line-level LRC. This API does not currently parse `lyricsfile` into TTML, so other TTML sources may rank ahead for word-level timing.
+- LRCLIB's `hasWordSync` indicates word-level timings are available in `lyricsfile`; Adi Lyrics now preserves both fields and reports the record as word-timed when both are present. Its basic `syncedLyrics` field is line-level LRC. Adi Lyrics does not yet convert LRCLIB's raw `lyricsfile` into normalized TTML, so the client should use a compatible Lyricsfile parser if selecting that field.
 - The API compares provider metadata and any exposed confidence value, but cannot algorithmically guarantee every sung word is correct. If sources disagree, inspect the result and keep the source attribution.
 
 ## Run locally
