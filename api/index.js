@@ -355,6 +355,24 @@ const providers = [
     const data = await request(`https://api.popcat.xyz/v2/lyrics?song=${encodeURIComponent(input.query || input.track)}`);
     return normalizeMany(data, "popcat");
   }},
+  { id: "lrc-red", async search(input) {
+    const isrc = text(input.isrc).toUpperCase();
+    // lrc.red exposes ISRC-keyed LRC resources, so don't call it without ISRC.
+    if (!/^[A-Z]{2}[A-Z0-9]{3}\\d{7}$/.test(isrc)) return [];
+    const base = `https://lrc.red/s/${encodeURIComponent(isrc)}`;
+    let metadata = null;
+    try { metadata = await request(`${base}.json`); } catch {}
+    let found = normalizeMany(metadata, "lrc-red");
+    if (found.length) return found;
+    try {
+      const raw = await request(`${base}.lrc`);
+      if (typeof raw === "string" && raw.trim()) {
+        found = normalizeMany(raw, "lrc-red", "lrc");
+        if (found.length) return found;
+      }
+    } catch {}
+    return [];
+  }},
   { id: "lrcmux", async search(input) {
     let artist = text(input.artist);
     let title = text(input.track);
