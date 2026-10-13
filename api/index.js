@@ -676,6 +676,66 @@ async function writeSyllableCache(input, result) {
   }
 }
 
+
+function itunesMetadataFromResult(item) {
+  if (!item || typeof item !== "object") return null;
+  return {
+    source: "itunes",
+    trackId: item.trackId ?? null,
+    artistId: item.artistId ?? null,
+    collectionId: item.collectionId ?? null,
+    track: firstString(item.trackName, item.trackCensoredName),
+    artist: firstString(item.artistName),
+    album: firstString(item.collectionName, item.collectionCensoredName),
+    duration: Number.isFinite(Number(item.trackTimeMillis)) ? Number(item.trackTimeMillis) / 1000 : null,
+    artworkUrl: firstString(item.artworkUrl100, item.artworkUrl60)?.replace(/100x100bb\./i, "600x600bb.") || null,
+    artworkUrl100: firstString(item.artworkUrl100),
+    trackUrl: firstString(item.trackViewUrl, item.collectionViewUrl),
+    artistUrl: firstString(item.artistViewUrl),
+    albumUrl: firstString(item.collectionViewUrl),
+    releaseDate: firstString(item.releaseDate),
+    trackNumber: item.trackNumber ?? null,
+    discNumber: item.discNumber ?? null,
+    genre: firstString(item.primaryGenreName),
+    explicit: item.trackExplicitness === "explicit",
+    country: firstString(item.country),
+    isrc: firstString(item.isrc)
+  };
+}
+function metadataMatchScore(item, input) {
+  const candidate = itunesMetadataFromResult(item);
+  if (!candidate) return -Infinity;
+  const wantedTrack = normalizedKey(input.track || input.query || "");
+  const wantedArtist = normalizedKey(input.artist || "");
+  const wantedAlbum = normalizedKey(input.album || "");
+  const track = normalizedKey(candidate.track || "");
+  const artist = normalizedKey(candidate.artist || "");
+  const album = normalizedKey(candidate.album || "");
+  let score = 0;
+  if (wantedTrack) score += track === wantedTrack ? 12 : (track.includes(wantedTrack) || wantedTrack.includes(track) ? 4 : -12);
+  if (wantedArtist) score += artist === wantedArtist ? 10 : (artist.includes(wantedArtist) || wantedArtist.includes(artist) ? 4 : -10);
+  if (wantedAlbum) score += album === wantedAlbum ? 3 : (album.includes(wantedAlbum) || wantedAlbum.includes(album) ? 1 : -2);
+  if (input.duration != null && candidate.duration != null) {
+    const delta = Math.abs(Number(input.duration) - candidate.duration);
+    score += delta <= 2 ? 3 : delta <= 5 ? 1 : -Math.min(6, delta);
+  }
+  return score;
+}
+async function lookupItunesMetadata(input, country = "US") {
+  const term = [input.track, input.artist, input.album].filter(Boolean).join(" ") || input.query;
+  if (!term) return null;
+  const params = new URLSearchParams({ term, country, media: "music", entity: "song", limit: "10" });
+  const data = await request(`https://itunes.apple.com/search?${params}`);
+  const results = Array.isArray(data?.results) ? data.results : [];
+  const ranked = results
+    .filter(item => item?.kind === "song" || item?.wrapperType === "track")
+    .map(item => ({ item, score: metadataMatchScore(item, input) }))
+    .sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+  if (!best || best.score < (input.artist && input.track ? 8 : 1)) return null;
+  return { ...itunesMetadataFromResult(best.item), matchScore: best.score };
+}
+
 async function handle(req) {
   const url = new URL(req.url, "http://localhost");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
@@ -684,7 +744,7 @@ async function handle(req) {
     ok: true, name: "Adi Lyrics", version: VERSION, providers: providers.map(p => p.id),
     syncPreference: ["word", "line", "plain"]
   });
-  if (!["/api/lyrics", "/lyrics", "/api/search", "/search", "/api", "/"].includes(url.pathname))
+  if (!["/api/lyrics", "/lyrics", "/api/search", "/search", "/api/metadata", "/metadata", "/api", "/"].includes(url.pathname))
     return json({ error: "not_found", message: "Try /api/lyrics?track=...&artist=... or /api/search?q=..." }, 404);
 
   const track = text(url.searchParams.get("track") || url.searchParams.get("title"));
@@ -694,6 +754,7 @@ async function handle(req) {
   const duration = durationValue !== null && durationValue !== "" ? Number(durationValue) : null;
   const isrc = text(url.searchParams.get("isrc"));
   const query = text(url.searchParams.get("q")) || [track, artist].filter(Boolean).join(" ");
+  const country = (text(url.searchParams.get("country")) || "US").toUpperCase().slice(0, 2);
   const provider = text(url.searchParams.get("provider"));
   const prefer = text(url.searchParams.get("prefer")) || "word";
   if (!query && !isrc) return json({ error: "missing_query", message: "Provide q or track. Optional: artist, album, duration, isrc, provider, prefer." }, 400);
@@ -704,6 +765,21 @@ async function handle(req) {
   const selected = providers.filter(p => !provider || p.id === provider).filter(p => provider || !p.fallbackOnly);
   if (provider && !selected.length) return json({ error: "unknown_provider", providers: providers.map(p => p.id) }, 400);
   const input = { track, artist, album, duration, isrc, query };
+  if (["/api/metadata", "/metadata"].includes(url.pathname)) {
+    try {
+      const metadata = await lookupItunesMetadata(input, country);
+      return json({ api: "Adi Lyrics", metadata, found: Boolean(metadata), source: "itunes" });
+    } catch (error) {
+      return json({ api: "Adi Lyrics", metadata: null, found: false, source: "itunes",
+        error: error?.name === "AbortError" ? "itunes_timeout" : "itunes_unavailable" }, 502);
+    }
+  }
+  let appleMetadata = null;
+  // Apple iTunes is the canonical source for catalog metadata. Keep lyrics-provider
+  // selection independent, and don't fail lyrics lookup if Apple's catalog is unavailable.
+  try { appleMetadata = await lookupItunesMetadata(input, country); } catch (error) {
+    console.warn("iTunes metadata lookup failed:", error?.message || "unknown error");
+  }
 
   // Return cached content only when it was previously verified as syllable-synced.
   const cached = await readSyllableCache(input, provider || null);
@@ -715,8 +791,9 @@ async function handle(req) {
       preference: prefer,
       found: true,
       count: 1,
-      lyrics: { ...cached, cached: true },
-      best: { ...cached, cached: true },
+      metadata: appleMetadata,
+      lyrics: { ...cached, cached: true, metadata: appleMetadata },
+      best: { ...cached, cached: true, metadata: appleMetadata },
       cache: { enabled: true, hit: true, saved: true },
       providers: [{ provider: "turso-cache", ok: true, count: 1, cached: true }]
     });
@@ -779,8 +856,9 @@ async function handle(req) {
     preference: prefer,
     found: Boolean(best),
     count: best ? 1 : 0,
-    lyrics: best,
-    best,
+    metadata: appleMetadata,
+    lyrics: best ? { ...best, metadata: appleMetadata } : null,
+    best: best ? { ...best, metadata: appleMetadata } : null,
     cache: {
       enabled: Boolean(process.env.T),
       hit: false,
