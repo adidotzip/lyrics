@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "functions": {
+    "api/index.js": {
+      "runtime": "nodejs20.x"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/lyrics",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/index.js"
+    }
+  ]
+}
