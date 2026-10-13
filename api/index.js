@@ -702,7 +702,7 @@ function itunesMetadataFromResult(item) {
     artworkUrl100: firstString(item.artworkUrl100),
     artworkUrl600: artwork?.replace(/\d+x\d+bb\./i, "600x600bb.") || null,
     trackUrl: firstString(item.trackViewUrl),
-    artistUrl: firstString(item.artistViewUrl),
+    artistUrl: firstString(item.artistViewUrl, item.artistLinkUrl),
     albumUrl: firstString(item.collectionViewUrl),
     previewUrl: firstString(item.previewUrl),
     releaseDate,
@@ -816,8 +816,32 @@ async function searchItunesCatalog(term, type = "all", country = "US", limit = 2
     params.set("entity", entity);
   }
   const data = await request(`https://itunes.apple.com/search?${params}`);
-  const results = Array.isArray(data?.results) ? data.results : [];
-  return { resultCount: Number(data?.resultCount ?? results.length), results: results.map(normalizeItunesCatalogItem).filter(Boolean) };
+  const rawResults = Array.isArray(data?.results) ? data.results : [];
+  const normalizedTerm = normalizedKey(term);
+  const scoreItem = item => {
+    const normalized = normalizeItunesCatalogItem(item);
+    if (!normalized) return -100;
+    const name = normalizedKey(type === "artist" ? normalized.artist : type === "album" ? normalized.album : normalized.track || normalized.album || normalized.artist);
+    const artist = normalizedKey(normalized.artist || "");
+    let score = 0;
+    if (name === normalizedTerm) score += 100;
+    else if (name.startsWith(normalizedTerm)) score += 60;
+    else if (name.includes(normalizedTerm)) score += 35;
+    else {
+      const tokens = normalizedTerm.split(" ").filter(Boolean);
+      const hits = tokens.filter(token => name.includes(token)).length;
+      score += tokens.length ? (hits / tokens.length) * 20 - 20 : 0;
+    }
+    if (type !== "artist" && artist === normalizedTerm) score += 12;
+    else if (type !== "artist" && artist.includes(normalizedTerm)) score += 6;
+    return score;
+  };
+  const ranked = rawResults.map(item => ({ item, score: scoreItem(item) }))
+    .filter(entry => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const results = ranked.slice(0, Math.max(1, Math.min(50, limit)))
+    .map(entry => normalizeItunesCatalogItem(entry.item)).filter(Boolean);
+  return { resultCount: results.length, results };
 }
 async function lookupItunesCatalog(id, entity = "", country = "US", limit = 50) {
   const params = new URLSearchParams({ id: String(id), country, limit: String(Math.max(1, Math.min(200, limit))) });
