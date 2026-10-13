@@ -1,3 +1,5 @@
+import { createClient } from "@libsql/client";
+
 const VERSION = "0.3.1";
 const TIMEOUT_MS = 7000;
 const USER_AGENT = `AdiLyrics/${VERSION} (https://github.com/adidotzip/lyrics)`;
@@ -541,6 +543,119 @@ function dedupe(items) {
   });
 }
 
+
+const TURSO_URL = "libsql://lyrics-adidotzip.aws-ap-south-1.turso.io";
+let tursoClient;
+let tursoSchemaPromise;
+
+function getTursoClient() {
+  if (!process.env.T) return null;
+  if (!tursoClient) {
+    tursoClient = createClient({ url: TURSO_URL, authToken: process.env.T });
+  }
+  return tursoClient;
+}
+
+async function ensureSyllableCacheTable(client) {
+  if (!tursoSchemaPromise) {
+    tursoSchemaPromise = client.execute(`
+      CREATE TABLE IF NOT EXISTS syllable_lyrics_cache (
+        cache_key TEXT PRIMARY KEY,
+        track TEXT,
+        artist TEXT,
+        album TEXT,
+        duration REAL,
+        provider TEXT NOT NULL,
+        lyrics_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `).catch(error => {
+      tursoSchemaPromise = null;
+      throw error;
+    });
+  }
+  await tursoSchemaPromise;
+}
+
+function syllableCacheKey(input) {
+  if (input.isrc) return `isrc:${text(input.isrc).toUpperCase()}`;
+  if (input.track && input.artist) {
+    return `track:${normalizedKey(input.track)}|artist:${normalizedKey(input.artist)}|album:${normalizedKey(input.album || "")}`;
+  }
+  return input.query ? `query:${normalizedKey(input.query)}` : null;
+}
+
+function hasSyllableSync(result) {
+  if (!result || typeof result !== "object") return false;
+  // BetterLyrics provides syllable-timed TTML; require actual timed spans.
+  if (result.provider === "betterlyrics" && typeof result.ttml === "string" &&
+      /<span\\b[^>]*(?:begin|end)=/i.test(result.ttml)) return true;
+
+  // Structured providers must explicitly supply syllables with timing.
+  const syllableRows = Array.isArray(result.syncLyrics) ? result.syncLyrics : [];
+  return syllableRows.some(line => Array.isArray(line?.syllables) &&
+    line.syllables.some(syllable => syllable && typeof syllable === "object" &&
+      (syllable.startTimeMs != null || syllable.start != null || syllable.startTime != null) &&
+      firstString(syllable.text, syllable.word, syllable.syllable) !== null));
+}
+
+async function readSyllableCache(input, requestedProvider) {
+  const client = getTursoClient();
+  const key = syllableCacheKey(input);
+  if (!client || !key) return null;
+  try {
+    await ensureSyllableCacheTable(client);
+    const result = await client.execute({
+      sql: "SELECT lyrics_json, provider FROM syllable_lyrics_cache WHERE cache_key = ? LIMIT 1",
+      args: [key]
+    });
+    const row = result.rows?.[0];
+    if (!row || (requestedProvider && String(row.provider) !== requestedProvider)) return null;
+    const lyrics = JSON.parse(String(row.lyrics_json));
+    if (!hasSyllableSync(lyrics)) return null;
+    return lyrics;
+  } catch (error) {
+    console.warn("Turso syllable cache read failed:", error?.message || "unknown error");
+    return null;
+  }
+}
+
+async function writeSyllableCache(input, result) {
+  if (!hasSyllableSync(result)) return false;
+  const client = getTursoClient();
+  const key = syllableCacheKey(input);
+  if (!client || !key) return false;
+  try {
+    await ensureSyllableCacheTable(client);
+    await client.execute({
+      sql: `INSERT INTO syllable_lyrics_cache
+        (cache_key, track, artist, album, duration, provider, lyrics_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(cache_key) DO UPDATE SET
+          track = excluded.track,
+          artist = excluded.artist,
+          album = excluded.album,
+          duration = excluded.duration,
+          provider = excluded.provider,
+          lyrics_json = excluded.lyrics_json,
+          created_at = datetime('now')`,
+      args: [
+        key,
+        result.track || input.track || null,
+        result.artist || input.artist || null,
+        result.album || input.album || null,
+        result.duration ?? input.duration ?? null,
+        result.provider,
+        JSON.stringify(result)
+      ]
+    });
+    return true;
+  } catch (error) {
+    console.warn("Turso syllable cache write failed:", error?.message || "unknown error");
+    return false;
+  }
+}
+
 async function handle(req) {
   const url = new URL(req.url, "http://localhost");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
@@ -569,6 +684,22 @@ async function handle(req) {
   const selected = providers.filter(p => !provider || p.id === provider).filter(p => provider || !p.fallbackOnly);
   if (provider && !selected.length) return json({ error: "unknown_provider", providers: providers.map(p => p.id) }, 400);
   const input = { track, artist, album, duration, isrc, query };
+
+  // Return cached content only when it was previously verified as syllable-synced.
+  const cached = await readSyllableCache(input, provider || null);
+  if (cached) {
+    return json({
+      api: "Adi Lyrics",
+      version: VERSION,
+      query: { track: track || null, artist: artist || null, album: album || null, duration, q: query || null, isrc: isrc || null },
+      preference: prefer,
+      found: true,
+      count: 1,
+      lyrics: { ...cached, cached: true },
+      best: { ...cached, cached: true },
+      providers: [{ provider: "turso-cache", ok: true, count: 1, cached: true }]
+    });
+  }
   const settled = await Promise.allSettled(selected.map(async p => {
     const results = await p.search(input);
     return { results, count: results.length };
@@ -616,6 +747,9 @@ async function handle(req) {
   // Keep "best" as a compatibility alias, but never return a provider-specific
   // results array that forces clients to implement their own normalization.
   const best = results[0] || null;
+  if (best && hasSyllableSync(best)) {
+    await writeSyllableCache(input, best);
+  }
   return json({
     api: "Adi Lyrics",
     version: VERSION,
