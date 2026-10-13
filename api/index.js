@@ -496,7 +496,13 @@ const providers = [
 
 function dedupe(items) {
   const seen = new Set();
-  return items.filter(item => {
+  // Sort before deduplication so a primary provider's copy wins when
+  // another provider returns the same lyric text.
+  const ranked = [...items].sort((a, b) => {
+    const priority = item => providers.find(provider => provider.id === item.provider)?.priority || 0;
+    return priority(b) - priority(a);
+  });
+  return ranked.filter(item => {
     const body = item.ttml || item.syncedLyrics || item.plainLyrics || "";
     const key = body.replace(/\s+/g, " ").trim().toLowerCase();
     if (!key || seen.has(key)) return false;
