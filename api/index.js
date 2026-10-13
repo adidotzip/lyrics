@@ -496,13 +496,20 @@ const providers = [
     const syncLyrics = lines.filter(line => line.start != null && line.start >= 0).map(line => ({
       startTimeMs: line.start,
       words: line.text,
-      syllables: Array.isArray(line.words) ? line.words : []
+      syllables: Array.isArray(line.syllables) ? line.syllables :
+        (Array.isArray(line.words) ? line.words.flatMap(word =>
+          Array.isArray(word?.syllables) ? word.syllables : []
+        ) : [])
     }));
     const syncedLyrics = syncArrayToLrc(syncLyrics);
     const metadata = payload.meta || data.meta || {};
     const track = payload.track && typeof payload.track === "object" ? payload.track : {};
-    const wordSync = lines.some(line => Array.isArray(line.words) && line.words.length > 0) ||
-      /word|syllable/i.test(String(metadata.level || payload.level || data.level || ""));
+    const hasSyllableSync = lines.some(line =>
+      (Array.isArray(line.syllables) && line.syllables.length > 0) ||
+      (Array.isArray(line.words) && line.words.some(word => Array.isArray(word?.syllables) && word.syllables.length > 0))
+    ) || /syllable/i.test(String(metadata.level || payload.level || data.level || ""));
+    const wordSync = hasSyllableSync || lines.some(line => Array.isArray(line.words) && line.words.length > 0) ||
+      /word/i.test(String(metadata.level || payload.level || data.level || ""));
     return [{
       track: firstString(track.title, payload.title, payload.trackName, payload.track_name, title),
       artist: firstString(track.artist, payload.artist, payload.artistName, payload.artist_name, artist),
@@ -519,6 +526,7 @@ const providers = [
       format: "lrcmux-compat",
       syncLevel: wordSync ? "word" : syncedLyrics ? "line" : "none",
       hasWordSync: wordSync,
+      hasSyllableSync,
       syncLyrics,
       provider: "lrcmux",
       upstream: firstString(metadata.source, payload.source, data.source),
@@ -592,6 +600,7 @@ function hasSyllableSync(result) {
       /<span\\b[^>]*(?:begin|end)=/i.test(result.ttml)) return true;
 
   // Structured providers must explicitly supply syllables with timing.
+  if (result.hasSyllableSync === true) return true;
   const syllableRows = Array.isArray(result.syncLyrics) ? result.syncLyrics : [];
   return syllableRows.some(line => Array.isArray(line?.syllables) &&
     line.syllables.some(syllable => syllable && typeof syllable === "object" &&
@@ -747,8 +756,9 @@ async function handle(req) {
   // Keep "best" as a compatibility alias, but never return a provider-specific
   // results array that forces clients to implement their own normalization.
   const best = results[0] || null;
-  if (best && hasSyllableSync(best)) {
-    await writeSyllableCache(input, best);
+  const syllableCandidate = results.find(hasSyllableSync) || null;
+  if (syllableCandidate) {
+    await writeSyllableCache(input, syllableCandidate);
   }
   return json({
     api: "Adi Lyrics",
