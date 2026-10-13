@@ -8,6 +8,7 @@ A free, open-source lyrics aggregator API that searches multiple lyric sources a
 - [AMLL TTML Database](https://github.com/amll-dev/amll-ttml-db), accessed through the official [AMLL TTML API](https://amll.dev/reference/http-api/overview), for TTML and word-level timing.
 - [Better Lyrics API](https://lyrics-api-docs.boidu.dev/reference/get-lyrics) for TTML with syllable-level timing.
 - [Unison](https://lyrics-api-docs.boidu.dev/unison) for community-synced TTML/LRC/plain lyrics.
+- [lrc.red](https://lrc.red/) via ISRC-keyed LRC/JSON resources.
 - [lrcmux](https://lrcmux.dev/) for aggregated lyrics with structured line/word timing; queried through its documented JSON endpoint.
 - VGJR endpoints for Spotify, KuGou, Shazam, Tidal and Deezer lyrics, including nested track metadata and `syncLyrics` payloads.
 - [Popcat lyrics](https://api.popcat.xyz/v2/lyrics) as a last-resort fallback only when the other sources return no usable lyrics.
@@ -28,7 +29,7 @@ curl "https://YOUR-DEPLOYMENT/api/search?q=E85%20Don%20Toliver&prefer=word"
 
 The default `prefer=word` prioritizes word/syllable timing after track identity and confidence are considered. Other values are `line`, `plain`, and `best`. You can restrict lookup to one provider with `provider=betterlyrics`, but normal use should omit `provider` so the resolver can compare all sources.
 
-Supported provider IDs: `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrcmux`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer`, `popcat`.
+Supported provider IDs: `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-red`, `lrcmux`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer`, `popcat`.
 
 ### `GET /api/health`
 
