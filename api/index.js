@@ -22,7 +22,50 @@ function xmlDecode(value) {
   return value.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'");
 }
+// Remove embedded translation subtrees before extracting or returning TTML.
+ // Many TTML sources place Chinese translations inside nested spans such as
+ // <span xml:lang="zh-CN">...</span>, sometimes without a ttm:role attribute.
+function stripTtmlTranslations(ttml) {
+  if (typeof ttml !== "string" || !ttml) return ttml;
+  const tokens = ttml.match(/<[^>]+>|[^<]+/g) || [];
+  const stack = [];
+  const output = [];
+  for (const token of tokens) {
+    if (/^<!--|^<!\[CDATA\[|^<!DOCTYPE|^<\?/.test(token)) {
+      if (!stack.some(entry => entry.drop)) output.push(token);
+      continue;
+    }
+    const closing = token.match(/^<\/\s*([\w:.-]+)[^>]*>$/);
+    if (closing) {
+      const index = stack.map(entry => entry.name).lastIndexOf(closing[1]);
+      const wasDropped = stack.some(entry => entry.drop);
+      if (!wasDropped) output.push(token);
+      if (index >= 0) stack.splice(index);
+      continue;
+    }
+    const opening = token.match(/^<\s*([\w:.-]+)([\s\S]*?)>$/);
+    if (!opening) {
+      if (!stack.some(entry => entry.drop)) output.push(token);
+      continue;
+    }
+    const name = opening[1];
+    const attrs = opening[2];
+    const selfClosing = /\/\s*$/.test(attrs);
+    const parentDropped = stack.some(entry => entry.drop);
+    const role = attrs.match(/(?:[\w.-]+:)?role\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+    const lang = attrs.match(/xml:lang\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+    const isTranslation = /translation/i.test(role) ||
+      (name.toLowerCase().endsWith(":span") || name.toLowerCase() === "span") &&
+      /^zh(?:-|$)/i.test(lang);
+    const drop = parentDropped || isTranslation;
+    if (!drop) output.push(token);
+    if (!selfClosing) stack.push({ name, drop });
+  }
+  return output.join("");
+}
+
 function ttmlToText(ttml) {
+  ttml = stripTtmlTranslations(ttml);
   const lines = [];
   const re = /<p\b[^>]*>([\s\S]*?)<\/p>/gi;
   let m;
@@ -42,11 +85,14 @@ function normalizeLyrics(data, provider, formatHint = null) {
   if (typeof data === "string") {
     const raw = data.trim();
     if (!raw) return null;
-    if (/<tt\b/i.test(raw)) return {
-      track: null, artist: null, album: null, duration: null, instrumental: null,
-      plainLyrics: ttmlToText(raw), syncedLyrics: null, ttml: raw, format: "ttml",
-      syncLevel: inferSyncLevel(raw), provider
-    };
+    if (/<tt\b/i.test(raw)) {
+      const cleanTtml = stripTtmlTranslations(raw);
+      return {
+        track: null, artist: null, album: null, duration: null, instrumental: null,
+        plainLyrics: ttmlToText(cleanTtml), syncedLyrics: null, ttml: cleanTtml, format: "ttml",
+        syncLevel: inferSyncLevel(cleanTtml), provider
+      };
+    }
     const isLrc = /\[\d{1,2}:\d{2}(?:\.\d+)?\]/.test(raw);
     return {
       track: null, artist: null, album: null, duration: null, instrumental: null,
@@ -73,7 +119,7 @@ function normalizeLyrics(data, provider, formatHint = null) {
     raw && /\[\d{1,2}:\d{2}(?:\.\d+)?\]/.test(raw) ? raw : null);
   const plain = firstString(data.plainLyrics, data.plain_lyrics, data.lyricsText, nested?.plainLyrics,
     raw && !/<tt\b/i.test(raw) && !/\[\d{1,2}:\d{2}(?:\.\d+)?\]/.test(raw) ? raw : null);
-  const cleanTtml = ttml && ttml.length < 500000 ? ttml : null;
+  const cleanTtml = ttml && ttml.length < 500000 ? stripTtmlTranslations(ttml) : null;
   const cleanSynced = synced && synced.length < 300000 ? synced : null;
   const cleanPlain = plain && plain.length < 300000 ? plain : null;
   if (!cleanTtml && !cleanSynced && !cleanPlain) return null;
