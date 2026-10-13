@@ -79,9 +79,9 @@ function normalizeLyrics(data, provider, formatHint = null) {
   if (!cleanTtml && !cleanSynced && !cleanPlain) return null;
   const format = cleanTtml ? "ttml" : cleanSynced ? "lrc" : (formatHint || "plain");
   return {
-    track: firstString(data.trackName, data.track_name, data.title, data.name, data.song, data.musicName, data.musicNames?.[0], nested?.song),
-    artist: firstString(data.artistName, data.artist_name, data.artist, data.artists?.[0], data.artistNames?.[0], nested?.artist),
-    album: firstString(data.albumName, data.album_name, data.album, data.albumNames?.[0], nested?.album),
+    track: firstString(data.trackName, data.track_name, data.title, data.name, data.song, data.musicName, data.musicNames?.[0], nested?.song, nested?.trackName, nested?.title, nested?.name),
+    artist: firstString(data.artistName, data.artist_name, data.artist, data.artists?.[0]?.name, data.artists?.[0], data.artistNames?.[0], nested?.artist, nested?.artists?.map?.(item => item?.name).filter(Boolean).join(", ")),
+    album: firstString(data.albumName, data.album_name, data.album, data.albumNames?.[0], nested?.album, nested?.albumName),
     duration: data.duration != null && Number.isFinite(Number(data.duration)) ? Number(data.duration) : null,
     instrumental: typeof data.instrumental === "boolean" ? data.instrumental : null,
     plainLyrics: cleanTtml ? (cleanPlain || ttmlToText(cleanTtml)) : cleanPlain,
