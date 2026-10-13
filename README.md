@@ -1,6 +1,6 @@
 # Adi Lyrics
 
-A free, open-source lyrics aggregator API that searches multiple lyric sources and returns normalized results with source and synchronization metadata.
+A free, open-source lyrics aggregator API at `https://lyrics.imreallyadi.music` that searches multiple lyric sources and returns normalized results with source and synchronization metadata.
 
 ## Providers
 
@@ -8,8 +8,8 @@ A free, open-source lyrics aggregator API that searches multiple lyric sources a
 - [AMLL TTML Database](https://github.com/amll-dev/amll-ttml-db), accessed through the official [AMLL TTML API](https://amll.dev/reference/http-api/overview), for TTML and word-level timing.
 - [Better Lyrics API](https://lyrics-api-docs.boidu.dev/reference/get-lyrics) for TTML with syllable-level timing.
 - [Unison](https://lyrics-api-docs.boidu.dev/unison) for community-synced TTML/LRC/plain lyrics.
-- [lrc.red](https://lrc.red/) via ISRC-keyed LRC/JSON resources.
-- [lrcmux](https://lrcmux.dev/) for aggregated lyrics with structured line/word timing; queried through its documented JSON endpoint.
+- **Primary:** [lrc.red](https://lrc.red/), searched by title/artist and fetched as TTML/LRC when available, with ISRC resource fallback.
+- **Primary:** [lrcmux](https://lrcmux.dev/) for structured line/word timing. These two sources are ranked ahead of the other providers when they return usable lyrics.
 - VGJR endpoints for Spotify, KuGou, Shazam, Tidal and Deezer lyrics, including nested track metadata and `syncLyrics` payloads.
 - [Popcat lyrics](https://api.popcat.xyz/v2/lyrics) as a last-resort fallback only when the other sources return no usable lyrics.
 
@@ -22,9 +22,9 @@ Upstream schemas, availability and rate limits can change. Adapter failures are 
 Both paths use the same unified resolver and return **one best lyrics result**, regardless of the provider that supplied it. Send a title (`track`) or free-text `q`. Supplying `artist`, `album`, `duration` (seconds), and `isrc` improves matching and enables providers that require exact metadata.
 
 ```sh
-curl "https://YOUR-DEPLOYMENT/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154"
+curl "https://lyrics.imreallyadi.music/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154"
 # Equivalent alias:
-curl "https://YOUR-DEPLOYMENT/api/search?q=E85%20Don%20Toliver&prefer=word"
+curl "https://lyrics.imreallyadi.music/api/search?q=E85%20Don%20Toliver&prefer=word"
 ```
 
 The default `prefer=word` prioritizes word/syllable timing after track identity and confidence are considered. Other values are `line`, `plain`, and `best`. You can restrict lookup to one provider with `provider=betterlyrics`, but normal use should omit `provider` so the resolver can compare all sources.
