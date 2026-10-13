@@ -862,7 +862,7 @@ async function handle(req) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (req.method !== "GET") return json({ error: "method_not_allowed", message: "Use GET." }, 405);
   const country = (text(url.searchParams.get("country")) || "US").toUpperCase().slice(0, 2);
-  const musicPath = url.pathname.replace(/\\/$/, "");
+  const musicPath = url.pathname.replace(/\/$/, "");
   if (musicPath.startsWith("/api/music/") || musicPath.startsWith("/music/")) {
     const route = musicPath.split("/").pop();
     const id = text(url.searchParams.get("id") || url.searchParams.get("artistId") || url.searchParams.get("albumId") || url.searchParams.get("trackId"));
