@@ -442,7 +442,7 @@ const providers = [
     let title = text(input.track);
     // Accept "Title - Artist" as a convenience when callers only provide q.
     if (!artist && !title && input.query) {
-      const parts = input.query.split(/\\s+-\\s+/);
+      const parts = input.query.split(/\s+-\s+/);
       if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
         title = parts[0].trim();
         artist = parts[1].trim();
@@ -490,7 +490,7 @@ const providers = [
     }).filter(Boolean);
     if (!lines.length) return [];
 
-    const plainLyrics = lines.map(line => line.text.trim()).filter(Boolean).join("\\n");
+    const plainLyrics = lines.map(line => line.text.trim()).filter(Boolean).join("\n");
     const syncLyrics = lines.filter(line => line.start != null && line.start >= 0).map(line => ({
       startTimeMs: line.start,
       words: line.text,
