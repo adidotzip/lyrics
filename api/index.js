@@ -849,7 +849,7 @@ async function searchItunesCatalog(term, type = "all", country = "US", limit = 2
     .map(entry => {
       const item = entry.normalized;
       if (type === "artist" && item?.artistId) {
-        const slug = normalizedKey(item.artist).replace(/\\s+/g, "-");
+        const slug = String(item.artist || "").normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
         return {
           ...item,
           artistUrl: firstString(item.artistUrl, `https://music.apple.com/${country.toLowerCase()}/artist/${slug}/${item.artistId}`),
