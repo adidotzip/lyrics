@@ -356,9 +356,17 @@ const providers = [
     return normalizeMany(data, "popcat");
   }},
   { id: "lrcmux", async search(input) {
-    const artist = text(input.artist);
-    const title = text(input.track || input.query);
+    let artist = text(input.artist);
+    let title = text(input.track);
     const isrc = text(input.isrc).toUpperCase();
+    // Accept "Title - Artist" as a convenience when callers only provide q.
+    if (!artist && !title && input.query) {
+      const parts = input.query.split(/\\s+-\\s+/);
+      if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
+        title = parts[0].trim();
+        artist = parts[1].trim();
+      }
+    }
     // lrcmux requires either an ISRC or both artist and title.
     if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(isrc) && (!artist || !title)) return [];
     const params = new URLSearchParams({ format: "json", level: "word" });
@@ -387,7 +395,8 @@ const providers = [
       track: firstString(track.title, title),
       artist: firstString(track.artist, artist),
       album: firstString(track.album, input.album),
-      duration: Number.isFinite(Number(track.duration)) ? Number(track.duration) : input.duration ?? null,
+      duration: track.duration != null && Number.isFinite(Number(track.duration))
+        ? Number(track.duration) : input.duration ?? null,
       instrumental: data.meta?.instrumental === true,
       plainLyrics,
       syncedLyrics,
@@ -397,6 +406,7 @@ const providers = [
       hasWordSync: wordSync,
       syncLyrics,
       provider: "lrcmux",
+      upstream: data.meta?.source || null,
       confidence: null
     }];
   }}
