@@ -504,10 +504,16 @@ const providers = [
     const syncedLyrics = syncArrayToLrc(syncLyrics);
     const metadata = payload.meta || data.meta || {};
     const track = payload.track && typeof payload.track === "object" ? payload.track : {};
+    const hasTimedSyllables = syllables => Array.isArray(syllables) && syllables.some(syllable =>
+      syllable && typeof syllable === "object" &&
+      (syllable.startTimeMs != null || syllable.start_time_ms != null ||
+        syllable.startTime != null || syllable.start_time != null || syllable.start != null) &&
+      firstString(syllable.text, syllable.word, syllable.syllable) !== null
+    );
     const hasSyllableSync = lines.some(line =>
-      (Array.isArray(line.syllables) && line.syllables.length > 0) ||
-      (Array.isArray(line.words) && line.words.some(word => Array.isArray(word?.syllables) && word.syllables.length > 0))
-    ) || /syllable/i.test(String(metadata.level || payload.level || data.level || ""));
+      hasTimedSyllables(line.syllables) ||
+      (Array.isArray(line.words) && line.words.some(word => hasTimedSyllables(word?.syllables)))
+    );
     const wordSync = hasSyllableSync || lines.some(line => Array.isArray(line.words) && line.words.length > 0) ||
       /word/i.test(String(metadata.level || payload.level || data.level || ""));
     return [{
