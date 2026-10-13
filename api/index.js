@@ -774,15 +774,17 @@ async function handle(req) {
         error: error?.name === "AbortError" ? "itunes_timeout" : "itunes_unavailable" }, 502);
     }
   }
-  let appleMetadata = null;
-  // Apple iTunes is the canonical source for catalog metadata. Keep lyrics-provider
-  // selection independent, and don't fail lyrics lookup if Apple's catalog is unavailable.
-  try { appleMetadata = await lookupItunesMetadata(input, country); } catch (error) {
-    console.warn("iTunes metadata lookup failed:", error?.message || "unknown error");
-  }
+  // Resolve catalog metadata alongside the cache read so iTunes latency does not
+  // delay the lyrics-provider fan-out. Metadata failures never block lyrics.
+  const [cached, appleMetadata] = await Promise.all([
+    readSyllableCache(input, provider || null),
+    lookupItunesMetadata(input, country).catch(error => {
+      console.warn("iTunes metadata lookup failed:", error?.message || "unknown error");
+      return null;
+    })
+  ]);
 
   // Return cached content only when it was previously verified as syllable-synced.
-  const cached = await readSyllableCache(input, provider || null);
   if (cached) {
     return json({
       api: "Adi Lyrics",
