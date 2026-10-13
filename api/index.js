@@ -387,8 +387,8 @@ async function handle(req) {
     ok: true, name: "Adi Lyrics", version: VERSION, providers: providers.map(p => p.id),
     syncPreference: ["word", "line", "plain"]
   });
-  if (!url.pathname.endsWith("/lyrics") && url.pathname !== "/api" && url.pathname !== "/")
-    return json({ error: "not_found", message: "Try /api/lyrics?track=...&artist=..." }, 404);
+  if (!["/api/lyrics", "/lyrics", "/api/search", "/search", "/api", "/"].includes(url.pathname))
+    return json({ error: "not_found", message: "Try /api/lyrics?track=...&artist=... or /api/search?q=..." }, 404);
 
   const track = text(url.searchParams.get("track") || url.searchParams.get("title"));
   const artist = text(url.searchParams.get("artist"));
@@ -398,7 +398,6 @@ async function handle(req) {
   const isrc = text(url.searchParams.get("isrc"));
   const query = text(url.searchParams.get("q")) || [track, artist].filter(Boolean).join(" ");
   const provider = text(url.searchParams.get("provider"));
-  const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit")) || 10, 20));
   const prefer = text(url.searchParams.get("prefer")) || "word";
   if (!query && !isrc) return json({ error: "missing_query", message: "Provide q or track. Optional: artist, album, duration, isrc, provider, limit, prefer." }, 400);
   if (duration !== null && (!Number.isFinite(duration) || duration < 0 || duration > 3600))
@@ -443,10 +442,21 @@ async function handle(req) {
     return (b.matchScore + preferenceBonus(b) + confidenceB) -
       (a.matchScore + preferenceBonus(a) + confidenceA);
   });
-  results = results.slice(0, limit);
-  return json({ api: "Adi Lyrics", version: VERSION,
+  // Return one canonical result regardless of which upstream provider won.
+  // Keep "best" as a compatibility alias, but never return a provider-specific
+  // results array that forces clients to implement their own normalization.
+  const best = results[0] || null;
+  return json({
+    api: "Adi Lyrics",
+    version: VERSION,
     query: { track: track || null, artist: artist || null, album: album || null, duration, q: query || null, isrc: isrc || null },
-    preference: prefer, found: results.length > 0, count: results.length, best: results[0] || null, results, providers: statuses });
+    preference: prefer,
+    found: Boolean(best),
+    count: best ? 1 : 0,
+    lyrics: best,
+    best,
+    providers: statuses
+  });
 }
 
 
