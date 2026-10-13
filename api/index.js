@@ -250,9 +250,16 @@ const providers = [
     return normalizeMany(await request(`https://lrclib.net/api/search?${params}`), "lrclib");
   }},
   { id: "betterlyrics", async search(input) {
-    if (!input.track || !input.artist || input.duration == null) return [];
-    const params = new URLSearchParams({ s: input.track, a: input.artist,
-      al: input.album || input.track, d: String(Math.round(input.duration)) });
+    const song = input.track || input.query;
+    if (!song) return [];
+    // Better Lyrics requires a song parameter. Metadata improves matching,
+    // but query-only searches should still be attempted instead of skipped.
+    const params = new URLSearchParams({
+      s: song,
+      a: input.artist || "",
+      al: input.album || input.track || song,
+      d: String(Math.round(input.duration ?? 0))
+    });
     // The default route returns { ttml }, while the provider-specific route
     // returns { lyrics, provider }. Accept both documented response shapes.
     let data = null;
@@ -263,22 +270,36 @@ const providers = [
     const ttml = firstString(data?.ttml,
       typeof data?.lyrics === "string" && /<tt\b/i.test(data.lyrics) ? data.lyrics : null);
     if (!ttml) return [];
-    return normalizeMany({ ...data, ttml, trackName: input.track, artistName: input.artist,
-      albumName: input.album }, "betterlyrics").map(item => ({
+    return normalizeMany({ ...data, ttml, trackName: input.track || data.trackName || data.title || song,
+      artistName: input.artist || data.artistName || data.artist,
+      albumName: input.album || data.albumName || data.album }, "betterlyrics").map(item => ({
         ...item, confidence: typeof data.score === "number" ? data.score : null
       }));
   }},
   { id: "unison", async search(input) {
-    if (!input.track || !input.artist) return [];
-    const params = new URLSearchParams({ song: input.track, artist: input.artist });
-    if (input.album) params.set("album", input.album);
-    if (input.duration != null) params.set("duration", String(Math.round(input.duration)));
-    const exact = await request(`https://unison.boidu.dev/lyrics?${params}`);
+    let exact;
+    if (input.track && input.artist) {
+      const params = new URLSearchParams({ song: input.track, artist: input.artist });
+      if (input.album) params.set("album", input.album);
+      if (input.duration != null) params.set("duration", String(Math.round(input.duration)));
+      exact = await request(`https://unison.boidu.dev/lyrics?${params}`);
+    } else if (input.query) {
+      // /lyrics/search is discovery-only: fetch the selected candidate by
+      // videoId before attempting to normalize its lyrics.
+      const search = await request(`https://unison.boidu.dev/lyrics/search?q=${encodeURIComponent(input.query)}&limit=5`);
+      const candidates = Array.isArray(search?.data) ? search.data : [];
+      const candidate = candidates.find(item => item?.videoId) || candidates[0];
+      if (!candidate?.videoId) return [];
+      exact = await request(`https://unison.boidu.dev/lyrics?v=${encodeURIComponent(candidate.videoId)}`);
+      if (exact?.success && exact.data) {
+        exact.data.matchScore = candidate.matchScore ?? null;
+      }
+    } else return [];
     if (exact?.success && exact.data?.lyrics) {
       return normalizeMany({ ...exact.data, trackName: exact.data.song, artistName: exact.data.artist,
         albumName: exact.data.album, lyrics: exact.data.lyrics }, "unison", exact.data.format)
         .map(item => ({ ...item, confidence: exact.data.confidence || null,
-          matchScore: exact.data.effectiveScore ?? exact.data.score ?? null }));
+          matchScore: exact.data.matchScore ?? exact.data.effectiveScore ?? exact.data.score ?? null }));
     }
     return [];
   }},
