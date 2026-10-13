@@ -82,7 +82,7 @@ function normalizeLyrics(data, provider, formatHint = null) {
     track: firstString(data.trackName, data.track_name, data.title, data.name, data.song, data.musicName, data.musicNames?.[0], nested?.song, nested?.trackName, nested?.title, nested?.name),
     artist: firstString(data.artistName, data.artist_name, data.artist, data.artists?.[0]?.name, data.artists?.[0], data.artistNames?.[0], nested?.artist, nested?.artists?.map?.(item => item?.name).filter(Boolean).join(", ")),
     album: firstString(data.albumName, data.album_name, data.album, data.albumNames?.[0], nested?.album, nested?.albumName),
-    duration: data.duration != null && Number.isFinite(Number(data.duration)) ? Number(data.duration) : null,
+    duration: (() => { const value = data.duration ?? nested?.duration; const n = Number(value); return value != null && Number.isFinite(n) ? (n > 3600 ? n / 1000 : n) : null; })(),
     instrumental: typeof data.instrumental === "boolean" ? data.instrumental : null,
     plainLyrics: cleanTtml ? (cleanPlain || ttmlToText(cleanTtml)) : cleanPlain,
     syncedLyrics: cleanSynced,
@@ -96,7 +96,8 @@ function normalizeLyrics(data, provider, formatHint = null) {
     syncLevel: cleanTtml ? inferSyncLevel(cleanTtml) :
       (data.hasWordSync === true && firstString(data.lyricsfile, data.lyrics_file, data.data?.lyricsfile) ? "word" :
       syncLyrics?.some(line => Array.isArray(line?.syllables) && line.syllables.length) ? "word" :
-      (cleanSynced ? "line" : "none")),
+      (syncLyrics?.some(line => line?.startTimeMs != null && typeof line?.words === "string") ? "line" :
+      (cleanSynced ? "line" : "none"))),
     provider
   };
 }
