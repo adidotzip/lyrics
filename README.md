@@ -31,6 +31,16 @@ The default `prefer=word` prioritizes word/syllable timing after track identity 
 
 Supported provider IDs: `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-red`, `lrcmux`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer`, `popcat`.
 
+### `GET /api/metadata`
+
+Uses Apple's public iTunes Search API as the catalog metadata source. It returns a best-matching song with Apple track, artist, and album IDs; artwork and store URLs; duration; release date; track/disc number; genre; and explicit-content status. No Apple developer token is required for the public iTunes Search API.
+
+```sh
+curl "https://lyrics.imreallyadi.space/api/metadata?track=Blinding%20Lights&artist=The%20Weeknd"
+```
+
+Optional parameters: `album`, `duration` (seconds), `q` (free-text search), and `country` (two-letter iTunes storefront code, default `US`). The regular lyrics and search endpoints also include a top-level `metadata` object from iTunes and attach it to the canonical `lyrics` result when a match is found. Catalog metadata lookup is independent of lyrics-provider selection, and an iTunes lookup failure does not prevent lyrics lookup.
+
 ### `GET /api/health`
 
 Returns the API version and supported providers.
