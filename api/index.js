@@ -603,7 +603,7 @@ function hasSyllableSync(result) {
   if (!result || typeof result !== "object") return false;
   // BetterLyrics provides syllable-timed TTML; require actual timed spans.
   if (result.provider === "betterlyrics" && typeof result.ttml === "string" &&
-      /<span\\b[^>]*(?:begin|end)=/i.test(result.ttml)) return true;
+      /<span\b[^>]*(?:begin|end)=/i.test(result.ttml)) return true;
 
   // Structured providers must explicitly supply syllables with timing.
   if (result.hasSyllableSync === true) return true;
