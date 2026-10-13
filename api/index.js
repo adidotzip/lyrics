@@ -1,4 +1,4 @@
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 const TIMEOUT_MS = 7000;
 const USER_AGENT = `AdiLyrics/${VERSION} (https://github.com/adidotzip/lyrics)`;
 
@@ -355,6 +355,60 @@ const providers = [
     const data = await request(`https://api.popcat.xyz/v2/lyrics?song=${encodeURIComponent(input.query || input.track)}`);
     return normalizeMany(data, "popcat");
   }},
+  { id: "spicy-lyrics", priority: 110, async search(input) {
+    // Spicy Lyrics resolves by Spotify track ID, not free-text title searches.
+    const trackId = text(input.spotifyTrackId);
+    const apiKey = text(process.env.Spicy);
+    if (!trackId || !/^[A-Za-z0-9]{22}$/.test(trackId) || !apiKey) return [];
+    const response = await request(`https://api.spicylyrics.org/v1/lyrics/${encodeURIComponent(trackId)}`);
+    const body = response?.Body ?? response?.body ?? response?.data?.Body ?? response?.data;
+    if (!body || typeof body !== "object" || !Array.isArray(body.Content)) return [];
+    const segments = body.Content.filter(segment => segment?.Type === "Vocal" && segment?.Lead);
+    const lines = segments.map(segment => {
+      const lead = segment.Lead;
+      const syllables = Array.isArray(lead.Syllables) ? lead.Syllables : [];
+      const words = syllables.map(syllable => text(syllable?.Text)).join("");
+      const start = Number(lead.StartTime ?? segment.StartTime ?? body.StartTime ?? 0);
+      return {
+        startTimeMs: Number.isFinite(start) ? Math.max(0, Math.round(start * 1000)) : 0,
+        words: words || text(lead.TransliteratedText) || text(lead.TranslatedText),
+        syllables: syllables.map(syllable => ({
+          text: text(syllable?.Text),
+          startTimeMs: Math.max(0, Math.round(Number(syllable?.StartTime || 0) * 1000)),
+          endTimeMs: Math.max(0, Math.round(Number(syllable?.EndTime || 0) * 1000)),
+          transliteratedText: text(syllable?.TransliteratedText) || null
+        }))
+      };
+    }).filter(line => line.words);
+    if (!lines.length) return [];
+    const syncLyrics = lines.map(line => ({ ...line, words: line.words }));
+    const plainLyrics = lines.map(line => line.words).join("\n");
+    const syncedLyrics = syncArrayToLrc(syncLyrics);
+    const wordSync = syncLyrics.some(line => line.syllables.some(syllable =>
+      syllable.startTimeMs > 0 || syllable.endTimeMs > 0));
+    const attribution = body.source === "spicy_lyrics" ? body.UploadAttribution : null;
+    return [{
+      track: firstString(input.track, body.trackName, body.title),
+      artist: firstString(input.artist, body.artistName, body.artist),
+      album: firstString(input.album, body.albumName, body.album),
+      duration: Number.isFinite(Number(body.EndTime)) && Number(body.EndTime) > 0 ? Number(body.EndTime) : input.duration ?? null,
+      instrumental: false,
+      plainLyrics,
+      syncedLyrics,
+      ttml: null,
+      format: "spicy-lyrics-json",
+      syncLevel: wordSync ? "word" : syncedLyrics ? "line" : "none",
+      hasWordSync: wordSync,
+      syncLyrics,
+      provider: "spicy-lyrics",
+      source: body.source || null,
+      attribution: attribution ? {
+        uploader: attribution.Uploader || null,
+        maker: attribution.Maker || null
+      } : null,
+      confidence: 100
+    }];
+  }},
   { id: "lrc-red", priority: 100, async search(input) {
     const isrc = text(input.isrc).toUpperCase();
     const validIsrc = /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(isrc);
@@ -526,18 +580,18 @@ async function handle(req) {
   const album = text(url.searchParams.get("album"));
   const durationValue = url.searchParams.get("duration");
   const duration = durationValue !== null && durationValue !== "" ? Number(durationValue) : null;
-  const isrc = text(url.searchParams.get("isrc"));
+  const isrc = text(url.searchParams.get("isrc"));\n  const spotifyTrackId = text(url.searchParams.get("spotifyId") || url.searchParams.get("spotifyTrackId") || url.searchParams.get("trackId"));
   const query = text(url.searchParams.get("q")) || [track, artist].filter(Boolean).join(" ");
   const provider = text(url.searchParams.get("provider"));
   const prefer = text(url.searchParams.get("prefer")) || "word";
-  if (!query && !isrc) return json({ error: "missing_query", message: "Provide q or track. Optional: artist, album, duration, isrc, provider, prefer." }, 400);
+  if (!query && !isrc && !spotifyTrackId) return json({ error: "missing_query", message: "Provide q or track. Optional: artist, album, duration, isrc, spotifyId, provider, prefer." }, 400);\n  if (spotifyTrackId && !/^[A-Za-z0-9]{22}$/.test(spotifyTrackId)) return json({ error: "invalid_spotify_id", message: "spotifyId must be a 22-character Spotify track ID." }, 400);
   if (duration !== null && (!Number.isFinite(duration) || duration < 0 || duration > 3600))
     return json({ error: "invalid_duration", message: "duration must be between 0 and 3600 seconds." }, 400);
   if (!["word", "line", "plain", "best"].includes(prefer))
     return json({ error: "invalid_prefer", message: "prefer must be word, line, plain, or best." }, 400);
   const selected = providers.filter(p => !provider || p.id === provider).filter(p => provider || !p.fallbackOnly);
   if (provider && !selected.length) return json({ error: "unknown_provider", providers: providers.map(p => p.id) }, 400);
-  const input = { track, artist, album, duration, isrc, query };
+  const input = { track, artist, album, duration, isrc, query, spotifyTrackId };
   const settled = await Promise.allSettled(selected.map(async p => {
     const results = await p.search(input);
     return { results, count: results.length };
@@ -588,7 +642,7 @@ async function handle(req) {
   return json({
     api: "Adi Lyrics",
     version: VERSION,
-    query: { track: track || null, artist: artist || null, album: album || null, duration, q: query || null, isrc: isrc || null },
+    query: { track: track || null, artist: artist || null, album: album || null, duration, q: query || null, isrc: isrc || null, spotifyId: spotifyTrackId || null },
     preference: prefer,
     found: Boolean(best),
     count: best ? 1 : 0,
