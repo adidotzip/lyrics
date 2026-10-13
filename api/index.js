@@ -355,31 +355,95 @@ const providers = [
     const data = await request(`https://api.popcat.xyz/v2/lyrics?song=${encodeURIComponent(input.query || input.track)}`);
     return normalizeMany(data, "popcat");
   }},
-  { id: "lrc-red", async search(input) {
+  { id: "lrc-red", priority: 100, async search(input) {
     const isrc = text(input.isrc).toUpperCase();
-    // lrc.red exposes ISRC-keyed LRC resources, so don't call it without ISRC.
-    if (!/^[A-Z]{2}[A-Z0-9]{3}\\d{7}$/.test(isrc)) return [];
-    const base = `https://lrc.red/s/${encodeURIComponent(isrc)}`;
-    let metadata = null;
-    try { metadata = await request(`${base}.json`); } catch {}
-    let found = normalizeMany(metadata, "lrc-red");
-    if (found.length) return found;
-    try {
-      const raw = await request(`${base}.lrc`);
-      if (typeof raw === "string" && raw.trim()) {
-        found = normalizeMany(raw, "lrc-red", "lrc");
-        if (found.length) return found;
+    const validIsrc = /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(isrc);
+    const query = [input.track, input.artist].filter(Boolean).join(" ") || input.query;
+    const candidates = [];
+    // Search first so this provider works for ordinary title/artist queries,
+    // not only callers that already know the recording's ISRC.
+    if (query) {
+      try {
+        const params = new URLSearchParams({ q: query });
+        const searchData = await request(\`https://lrc.red/api/v1?\${params}\`);
+        const list = Array.isArray(searchData) ? searchData :
+          Array.isArray(searchData?.results) ? searchData.results :
+          Array.isArray(searchData?.data?.results) ? searchData.data.results :
+          Array.isArray(searchData?.data) ? searchData.data : [];
+        candidates.push(...list);
+      } catch {}
+    }
+    const norm = value => normalizedKey(value || "");
+    const wantedTitle = norm(input.track);
+    const wantedArtist = norm(input.artist);
+    const candidateScore = item => {
+      const title = norm(item?.title || item?.track || item?.trackName || item?.track_name);
+      const artist = norm(item?.artist || item?.artists || item?.artistName || item?.artist_name);
+      let score = 0;
+      if (wantedTitle && title) score += title === wantedTitle ? 8 :
+        (title.includes(wantedTitle) || wantedTitle.includes(title) ? 3 : -20);
+      if (wantedArtist && artist) score += artist === wantedArtist ? 7 :
+        (artist.includes(wantedArtist) || wantedArtist.includes(artist) ? 3 : -20);
+      if (input.duration != null && item?.duration != null) {
+        const delta = Math.abs(Number(item.duration) - Number(input.duration));
+        score += delta <= 2 ? 3 : delta <= 5 ? 1 : -Math.min(6, delta);
       }
-    } catch {}
+      return score;
+    };
+    candidates.sort((a, b) => candidateScore(b) - candidateScore(a));
+    for (const candidate of candidates) {
+      const lyricsUrl = firstString(candidate?.lyricsUrl, candidate?.lyrics_url, candidate?.ttmlUrl,
+        candidate?.ttml_url, candidate?.url);
+      if (!lyricsUrl) {
+        const inline = normalizeLyrics(candidate, "lrc-red");
+        if (inline) return [{ ...inline, confidence: candidateScore(candidate) }];
+        continue;
+      }
+      let target;
+      try { target = new URL(lyricsUrl, "https://lrc.red"); } catch { continue; }
+      if (target.protocol !== "https:" || !(target.hostname === "lrc.red" || target.hostname.endsWith(".lrc.red"))) continue;
+      try {
+        const body = await request(target.toString());
+        const normalized = normalizeMany(body, "lrc-red", target.pathname.endsWith(".lrc") ? "lrc" : null);
+        if (normalized.length) return normalized.map(item => ({
+          ...item,
+          track: item.track || firstString(candidate.title, candidate.track, input.track),
+          artist: item.artist || firstString(candidate.artist, candidate.artistName, input.artist),
+          album: item.album || firstString(candidate.album, input.album),
+          duration: item.duration ?? candidate.duration ?? input.duration ?? null,
+          confidence: candidateScore(candidate)
+        }));
+        if (typeof body === "string" && /<tt\b/i.test(body)) {
+          const item = normalizeLyrics(body, "lrc-red");
+          if (item) return [{ ...item, track: firstString(candidate.title, input.track),
+            artist: firstString(candidate.artist, input.artist), confidence: candidateScore(candidate) }];
+        }
+      } catch {}
+    }
+    // ISRC direct resources are useful when a caller already has an exact ID.
+    if (validIsrc) {
+      for (const extension of ["ttml", "lrc", "json"]) {
+        try {
+          const body = await request(\`https://lrc.red/s/\${encodeURIComponent(isrc)}.\${extension}\`);
+          const found = normalizeMany(body, "lrc-red", extension === "lrc" ? "lrc" : null);
+          if (found.length) return found.map(item => ({ ...item, track: item.track || input.track || null,
+            artist: item.artist || input.artist || null, confidence: 100 }));
+          if (typeof body === "string" && /<tt\b/i.test(body)) {
+            const item = normalizeLyrics(body, "lrc-red");
+            if (item) return [{ ...item, track: input.track || null, artist: input.artist || null, confidence: 100 }];
+          }
+        } catch {}
+      }
+    }
     return [];
   }},
-  { id: "lrcmux", async search(input) {
+  { id: "lrcmux", priority: 90, async search(input) {
     let artist = text(input.artist);
     let title = text(input.track);
     const isrc = text(input.isrc).toUpperCase();
     // Accept "Title - Artist" as a convenience when callers only provide q.
     if (!artist && !title && input.query) {
-      const parts = input.query.split(/\\s+-\\s+/);
+      const parts = input.query.split(/\s+-\s+/);
       if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
         title = parts[0].trim();
         artist = parts[1].trim();
@@ -496,7 +560,15 @@ async function handle(req) {
     prefer === "word" ? (result.syncLevel === "word" ? 2.5 : result.syncLevel === "line" ? 0.5 : 0) :
     prefer === "line" ? (result.syncLevel === "line" ? 2 : result.syncLevel === "word" ? 1 : 0) :
     (result.syncLevel === "none" ? 2 : 0);
+  const providerPriority = result => {
+    const provider = providers.find(item => item.id === result.provider);
+    return provider?.priority || 0;
+  };
   results.sort((a, b) => {
+    // lrc.red and lrcmux are primary sources; identity mismatches are filtered above.
+    const priorityA = providerPriority(a);
+    const priorityB = providerPriority(b);
+    if (priorityA !== priorityB) return priorityB - priorityA;
     // Correct track identity and source confidence outweigh the sync format.
     const confidenceA = typeof a.confidence === "number" ? a.confidence * 2 : 0;
     const confidenceB = typeof b.confidence === "number" ? b.confidence * 2 : 0;
