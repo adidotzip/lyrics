@@ -266,8 +266,8 @@ function dedupe(items) {
   });
 }
 
-export default async function handler(req) {
-  const url = new URL(req.url);
+async function handle(req) {
+  const url = new URL(req.url, "http://localhost");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (req.method !== "GET") return json({ error: "method_not_allowed", message: "Use GET." }, 405);
   if (["/api/health", "/health"].includes(url.pathname)) return json({
@@ -334,4 +334,24 @@ export default async function handler(req) {
   return json({ api: "Adi Lyrics", version: VERSION,
     query: { track: track || null, artist: artist || null, album: album || null, duration, q: query || null, isrc: isrc || null },
     preference: prefer, found: results.length > 0, count: results.length, best: results[0] || null, results, providers: statuses });
+}
+
+
+// Vercel Node.js functions use the Node request/response interface.
+// Adapt the Fetch-style internal response to Node's ServerResponse.
+export default async function handler(req, res) {
+  try {
+    const response = await handle(req);
+    res.statusCode = response.status;
+    response.headers.forEach((value, key) => res.setHeader(key, value));
+    res.end(await response.text());
+  } catch (error) {
+    console.error("Adi Lyrics handler failed:", error);
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader("content-type", "application/json; charset=utf-8");
+      res.setHeader("access-control-allow-origin", "*");
+    }
+    res.end(JSON.stringify({ error: "internal_error", message: "The lyrics API encountered an unexpected error." }));
+  }
 }
