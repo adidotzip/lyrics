@@ -85,9 +85,14 @@ function normalizeLyrics(data, provider, formatHint = null) {
     instrumental: typeof data.instrumental === "boolean" ? data.instrumental : null,
     plainLyrics: cleanTtml ? (cleanPlain || ttmlToText(cleanTtml)) : cleanPlain,
     syncedLyrics: cleanSynced,
+    // LRCLIB's lyricsfile may contain word-level timing not present in plain LRC.
+    lyricsfile: firstString(data.lyricsfile, data.lyrics_file, data.data?.lyricsfile),
+    hasWordSync: typeof data.hasWordSync === "boolean" ? data.hasWordSync : null,
     ttml: cleanTtml,
     format,
-    syncLevel: cleanTtml ? inferSyncLevel(cleanTtml) : cleanSynced ? "line" : "none",
+    syncLevel: cleanTtml ? inferSyncLevel(cleanTtml) :
+      (data.hasWordSync === true && firstString(data.lyricsfile, data.lyrics_file, data.data?.lyricsfile) ? "word" :
+      cleanSynced ? "line" : "none"),
     provider
   };
 }
