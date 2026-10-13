@@ -9,7 +9,8 @@ A free, open-source lyrics aggregator API that searches multiple lyric sources a
 - [Better Lyrics API](https://lyrics-api-docs.boidu.dev/reference/get-lyrics) for TTML with syllable-level timing.
 - [Unison](https://lyrics-api-docs.boidu.dev/unison) for community-synced TTML/LRC/plain lyrics.
 - [lrc.red](https://lrc.red/) via ISRC-keyed resources.
-- VGJR endpoints for Spotify, KuGou, Shazam, Tidal and Deezer lyrics.
+- VGJR endpoints for Spotify, KuGou, Shazam, Tidal and Deezer lyrics, including nested track metadata and `syncLyrics` payloads.
+- [Popcat lyrics](https://api.popcat.xyz/v2/lyrics) as a last-resort fallback only when the other sources return no usable lyrics.
 
 Upstream schemas, availability and rate limits can change. Adapter failures are isolated and reported per provider.
 
@@ -35,7 +36,7 @@ Choose a single source:
 curl "https://YOUR-DEPLOYMENT/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154&provider=betterlyrics"
 ```
 
-Supported provider IDs: `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-red`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer`.
+Supported provider IDs: `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-red`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer`, `popcat`.
 
 Optional `prefer` values:
 - `word` (default): prefer word/syllable-level timing.
@@ -49,7 +50,7 @@ Returns the API version and supported providers.
 
 ## Response format
 
-The response includes the selected `best` record, ranked `results`, and provider status summaries. Results preserve the original `ttml` where available and also include `plainLyrics` for clients that need a text fallback.
+The response includes the selected `best` record, ranked `results`, and provider status summaries. Results preserve the original `ttml` and provider `syncLyrics` word/line timing payloads where available, and include `plainLyrics` for clients that need a text fallback. Popcat is called only after all normal sources fail to return usable lyrics.
 
 A normalized result can look like:
 
