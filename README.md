@@ -1,70 +1,172 @@
 # Adi Lyrics
 
-A free, open-source lyrics aggregator API at `https://lyrics.imreallyadi.music` that searches multiple lyric sources and returns normalized results with source and synchronization metadata.
+Adi Lyrics is my lyrics API. It searches different lyrics providers and returns one result in a consistent format, so apps using it don't have to handle every provider separately.
 
-## Providers
+API: https://lyrics.imreallyadi.space
 
-- [LRCLIB](https://lrclib.net/) for plain and line-synchronized lyrics.
-- [AMLL TTML Database](https://github.com/amll-dev/amll-ttml-db), accessed through the official [AMLL TTML API](https://amll.dev/reference/http-api/overview), for TTML and word-level timing.
-- [Better Lyrics API](https://lyrics-api-docs.boidu.dev/reference/get-lyrics) for TTML with syllable-level timing.
-- [Unison](https://lyrics-api-docs.boidu.dev/unison) for community-synced TTML/LRC/plain lyrics.
-- **Primary:** [lrc.red](https://lrc.red/), searched by title/artist and fetched as TTML/LRC when available, with ISRC resource fallback.
-- **Primary:** [lrcmux](https://lrcmux.dev/) for structured line/word timing. These two sources are ranked ahead of the other providers when they return usable lyrics.
-- VGJR endpoints for Spotify, KuGou, Shazam, Tidal and Deezer lyrics, including nested track metadata and `syncLyrics` payloads.
-- [Popcat lyrics](https://api.popcat.xyz/v2/lyrics) as a last-resort fallback only when the other sources return no usable lyrics.
+## Lyrics providers
 
-Upstream schemas, availability and rate limits can change. Adapter failures are isolated and reported per provider.
+The API checks multiple sources, including:
+
+- [lrc.red](https://lrc.red/)
+- [lrcMUX](https://lrcmux.dev/)
+- [LRCLIB](https://lrclib.net/)
+- [Better Lyrics](https://lyrics-api-docs.boidu.dev/reference/get-lyrics)
+- [Unison](https://lyrics-api-docs.boidu.dev/unison)
+- [AMLL TTML Database](https://github.com/amll-dev/amll-ttml-db)
+- VGJR lyrics sources for Spotify, KuGou, Shazam, Tidal and Deezer
+- [Popcat](https://api.popcat.xyz/v2/lyrics) as a fallback
+
+lrc.red and lrcMUX are treated as primary sources. The API still checks other providers when needed. Providers can fail or change their responses, so one source not working should not stop the whole request.
 
 ## Endpoints
 
-### `GET /api/lyrics` and `GET /api/search`
+### Get lyrics
 
-Both paths use the same unified resolver and return **one best lyrics result**, regardless of the provider that supplied it. Send a title (`track`) or free-text `q`. Supplying `artist`, `album`, `duration` (seconds), and `isrc` improves matching and enables providers that require exact metadata.
+`GET /api/lyrics`
+
+Returns the best lyrics result the API can find.
+
+Example:
 
 ```sh
-curl "https://lyrics.imreallyadi.music/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154"
-# Equivalent alias:
-curl "https://lyrics.imreallyadi.music/api/search?q=E85%20Don%20Toliver&prefer=word"
+curl "https://lyrics.imreallyadi.space/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154"
 ```
 
-The default `prefer=word` prioritizes word/syllable timing after track identity and confidence are considered. Other values are `line`, `plain`, and `best`. You can restrict lookup to one provider with `provider=betterlyrics`, but normal use should omit `provider` so the resolver can compare all sources.
+You can use these query parameters:
 
-Supported provider IDs: `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-red`, `lrcmux`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer`, `popcat`.
+- `track`: song title
+- `q`: search text
+- `artist`: artist name
+- `album`: album name
+- `duration`: track duration in seconds
+- `isrc`: recording ID
+- `prefer`: `word`, `line`, `plain` or `best`
+- `provider`: use one provider instead of checking all of them
 
-### `GET /api/metadata`
+The default is `prefer=word`, which prioritizes word or syllable timing while still considering how well the result matches the song.
 
-Uses Apple's public iTunes Search API as the catalog metadata source. It returns a best-matching song with Apple track, artist, and album IDs; artwork and store URLs, preview URL, duration in seconds and milliseconds, release date and year, track/disc number, track count, genres, content advisory, pricing/currency, copyright, streaming availability when supplied, and explicit-content status. It also returns up to four close alternate editions when Apple returns comparable matches. No Apple developer token is required for the public iTunes Search API.
+### Search lyrics
+
+`GET /api/search`
+
+This uses the same lyrics resolver as `/api/lyrics`. You can search with a title or a free-text query.
+
+```sh
+curl "https://lyrics.imreallyadi.space/api/search?q=E85%20Don%20Toliver&prefer=word"
+```
+
+Provider IDs include `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-red`, `lrcmux`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer` and `popcat`.
+
+### Get song metadata
+
+`GET /api/metadata`
+
+Uses Apple's public iTunes API to find song information. It can return the song, artist and album IDs, artwork, Apple Music links, preview URL, duration, release date, genre, track/disc number, explicit status, pricing and other metadata. It can also return alternate editions when Apple has close matches.
 
 ```sh
 curl "https://lyrics.imreallyadi.space/api/metadata?track=Blinding%20Lights&artist=The%20Weeknd"
 ```
 
-Optional parameters: `album`, `duration` (seconds), `q` (free-text search), and `country` (two-letter iTunes storefront code, default `US`). The regular lyrics and search endpoints also include a top-level `metadata` object from iTunes and attach it to the canonical `lyrics` result when a match is found. Catalog metadata lookup is independent of lyrics-provider selection, and an iTunes lookup failure does not prevent lyrics lookup.
+Parameters:
 
-### Music catalog endpoints
+- `track`: song title
+- `artist`: artist name
+- `album`: album name
+- `duration`: duration in seconds
+- `q`: free-text search
+- `country`: two-letter iTunes storefront code, defaults to `US`
 
-These endpoints use Apple's public iTunes Search/Lookup APIs and Apple Music RSS charts. They do not require an Apple Music developer token.
+Lyrics responses can include this metadata too. Metadata lookup is separate from lyrics lookup, so an iTunes error should not stop the lyrics search.
 
-| Endpoint | Purpose | Example |
-| --- | --- | --- |
-| `GET /api/music/search?q=...` | Search songs, albums, artists, and music videos | `/api/music/search?q=Daft%20Punk&type=artist` |
-| `GET /api/music/lookup?id=...` | Look up a catalog ID | `/api/music/lookup?id=909253&entity=album` |
-| `GET /api/music/artist?id=...` | Look up an artist and their albums | `/api/music/artist?id=909253` |
-| `GET /api/music/album?id=...` | Look up an album and its tracks | `/api/music/album?id=1440857781` |
-| `GET /api/music/song?id=...` | Look up a song by ID | `/api/music/song?id=1440857782` |
-| `GET /api/music/top?type=songs` | Get current chart listings | `/api/music/top?type=albums&country=US&limit=25` |
+### Search the music catalog
 
-Search accepts `q` or `term`, `type=all|song|album|artist|musicVideo`, `country` (two-letter storefront code), and `limit`. Lookup accepts `id` plus optional `entity=song|album|artist|musicVideo`. The artist endpoint defaults to albums; the album endpoint defaults to songs. Top charts accept `type=songs|albums|music-videos`, `country`, and `limit` (up to 100). IDs are Apple/iTunes catalog IDs, not local database IDs.
+`GET /api/music/search`
 
-### `GET /api/health`
+Searches Apple's catalog for songs, albums, artists or music videos.
 
-Returns the API version and supported providers.
+```sh
+curl "https://lyrics.imreallyadi.space/api/music/search?q=Daft%20Punk&type=artist"
+```
+
+Parameters:
+
+- `q` or `term`: search query
+- `type`: `all`, `song`, `album`, `artist` or `musicVideo`
+- `country`: two-letter storefront code
+- `limit`: number of results
+
+### Look up a catalog ID
+
+`GET /api/music/lookup`
+
+Looks up an Apple/iTunes catalog ID.
+
+```sh
+curl "https://lyrics.imreallyadi.space/api/music/lookup?id=909253&entity=album"
+```
+
+Parameters: `id`, optional `entity`, `country` and `limit`. Entity can be `song`, `album`, `artist` or `musicVideo`.
+
+### Get an artist and their albums
+
+`GET /api/music/artist?id=...`
+
+```sh
+curl "https://lyrics.imreallyadi.space/api/music/artist?id=5468295"
+```
+
+Use the Apple artist ID as `id`.
+
+### Get an album and its tracks
+
+`GET /api/music/album?id=...`
+
+```sh
+curl "https://lyrics.imreallyadi.space/api/music/album?id=1440857781"
+```
+
+Use the Apple album ID as `id`.
+
+### Get a song by ID
+
+`GET /api/music/song?id=...`
+
+```sh
+curl "https://lyrics.imreallyadi.space/api/music/song?id=1440857782"
+```
+
+Use the Apple song ID as `id`.
+
+### Get music charts
+
+`GET /api/music/top`
+
+Gets chart listings from Apple Music RSS.
+
+```sh
+curl "https://lyrics.imreallyadi.space/api/music/top?type=albums&country=US&limit=25"
+```
+
+Parameters:
+
+- `type`: `songs`, `albums` or `music-videos`
+- `country`: two-letter storefront code
+- `limit`: number of results, up to 100
+
+These music catalog endpoints use Apple's public APIs and do not need an Apple Music developer token.
+
+### Check API status
+
+`GET /api/health`
+
+Returns API version and supported providers.
 
 ## Response format
 
-Every lyrics endpoint returns the same schema with a single canonical `lyrics` object (or `null` when nothing matched), a `found` flag, and per-provider status summaries. `best` remains as a backwards-compatible alias for `lyrics`. The API does not return a provider-specific `results` array, so clients do not need to merge, rank, or normalize providers themselves.
+The lyrics endpoints return a `found` flag, a `lyrics` object (or `null` if nothing matched), and provider status information. The `best` field is also included as an alias for `lyrics`.
 
-A normalized result can look like:
+A lyrics result can include fields like:
 
 ```json
 {
@@ -83,30 +185,29 @@ A normalized result can look like:
 }
 ```
 
-Fields that a provider does not supply are omitted or set to `null`. `syncLevel` describes the timing structure, not lyric accuracy.
+Some fields might be `null` or missing if the provider doesn't return them. `syncLevel` describes the timing format. It doesn't guarantee the lyrics are correct.
 
-## Matching and accuracy
+## How matching works
 
-- Title, artist, album and duration metadata affect ranking; explicit metadata mismatches are filtered when title and artist are provided.
-- Word/syllable timing is a preference, not proof that the lyrics are correct.
-- LRCLIB's `hasWordSync` indicates word-level timings are available in `lyricsfile`; Adi Lyrics now preserves both fields and reports the record as word-timed when both are present. Its basic `syncedLyrics` field is line-level LRC. Adi Lyrics does not yet convert LRCLIB's raw `lyricsfile` into normalized TTML, so the client should use a compatible Lyricsfile parser if selecting that field.
-- The API compares provider metadata and any exposed confidence value, but cannot algorithmically guarantee every sung word is correct. If sources disagree, inspect the result and keep the source attribution.
+The API uses the song title and any available artist, album, duration and ISRC information to help pick a result. Word-synced lyrics are preferred by default, but a better timing format doesn't automatically mean the lyrics are more accurate.
+
+LRCLIB can also return a `lyricsfile` with word timing. The API preserves that field, but it doesn't currently convert it into the normalized TTML format, so you'll need a compatible parser if you want to use it.
 
 ## Run locally
 
-Requires Node.js 20 or newer.
+You need Node.js 20 or newer.
 
 ```sh
 npm install
 npm start
 ```
 
-Deploy by importing the repository into Vercel.
+To deploy it, connect the repository to Vercel.
 
-## Responsible use
+## Notes
 
-Lyrics are copyrighted works owned by their respective rights holders. This project does not claim ownership of fetched lyrics. The AMLL database notes that content is governed by its applicable sharing terms, including attribution or upstream-specific conditions. Review each upstream source's terms, rate limits and attribution requirements before operating a public deployment. Respect upstream rate limits and access controls.
+Lyrics belong to their respective rights holders. This project doesn't claim ownership of lyrics returned by the providers. Please follow each provider's terms, attribution requirements and rate limits.
 
 ## License
 
-The aggregator code is MIT licensed. This does not relicense lyrics returned by upstream providers; their individual terms continue to apply.
+The API code is licensed under MIT. This does not change the licensing or usage terms for lyrics returned by other services.
