@@ -1,4 +1,4 @@
-const VERSION = "0.2.1";
+const VERSION = "0.3.0";
 const TIMEOUT_MS = 7000;
 const USER_AGENT = `AdiLyrics/${VERSION} (https://github.com/adidotzip/lyrics)`;
 
@@ -399,7 +399,7 @@ async function handle(req) {
   const query = text(url.searchParams.get("q")) || [track, artist].filter(Boolean).join(" ");
   const provider = text(url.searchParams.get("provider"));
   const prefer = text(url.searchParams.get("prefer")) || "word";
-  if (!query && !isrc) return json({ error: "missing_query", message: "Provide q or track. Optional: artist, album, duration, isrc, provider, limit, prefer." }, 400);
+  if (!query && !isrc) return json({ error: "missing_query", message: "Provide q or track. Optional: artist, album, duration, isrc, provider, prefer." }, 400);
   if (duration !== null && (!Number.isFinite(duration) || duration < 0 || duration > 3600))
     return json({ error: "invalid_duration", message: "duration must be between 0 and 3600 seconds." }, 400);
   if (!["word", "line", "plain", "best"].includes(prefer))
