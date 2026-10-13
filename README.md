@@ -16,33 +16,19 @@ Upstream schemas, availability and rate limits can change. Adapter failures are 
 
 ## Endpoints
 
-### `GET /api/lyrics`
+### `GET /api/lyrics` and `GET /api/search`
 
-Search across providers. Send a title (`track`) or `q`. Supplying `artist`, `album`, `duration` (seconds), and `isrc` improves matching and enables providers that require exact metadata.
+Both paths use the same unified resolver and return **one best lyrics result**, regardless of the provider that supplied it. Send a title (`track`) or free-text `q`. Supplying `artist`, `album`, `duration` (seconds), and `isrc` improves matching and enables providers that require exact metadata.
 
 ```sh
 curl "https://YOUR-DEPLOYMENT/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154"
+# Equivalent alias:
+curl "https://YOUR-DEPLOYMENT/api/search?q=E85%20Don%20Toliver&prefer=word"
 ```
 
-Prefer word/syllable timing (default):
-
-```sh
-curl "https://YOUR-DEPLOYMENT/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154&prefer=word"
-```
-
-Choose a single source:
-
-```sh
-curl "https://YOUR-DEPLOYMENT/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154&provider=betterlyrics"
-```
+The default `prefer=word` prioritizes word/syllable timing after track identity and confidence are considered. Other values are `line`, `plain`, and `best`. You can restrict lookup to one provider with `provider=betterlyrics`, but normal use should omit `provider` so the resolver can compare all sources.
 
 Supported provider IDs: `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-red`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer`, `popcat`.
-
-Optional `prefer` values:
-- `word` (default): prefer word/syllable-level timing.
-- `line`: prefer line-synchronized lyrics.
-- `plain`: prefer unsynchronized plain text.
-- `best`: rank primarily by metadata match and confidence.
 
 ### `GET /api/health`
 
@@ -50,7 +36,7 @@ Returns the API version and supported providers.
 
 ## Response format
 
-The response includes the selected `best` record, ranked `results`, and provider status summaries. Results preserve the original `ttml` and provider `syncLyrics` word/line timing payloads where available, and include `plainLyrics` for clients that need a text fallback. Popcat is called only after all normal sources fail to return usable lyrics.
+Every lyrics endpoint returns the same schema with a single canonical `lyrics` object (or `null` when nothing matched), a `found` flag, and per-provider status summaries. `best` remains as a backwards-compatible alias for `lyrics`. The API does not return a provider-specific `results` array, so clients do not need to merge, rank, or normalize providers themselves.
 
 A normalized result can look like:
 
