@@ -679,26 +679,47 @@ async function writeSyllableCache(input, result) {
 
 function itunesMetadataFromResult(item) {
   if (!item || typeof item !== "object") return null;
+  const artwork = firstString(item.artworkUrl100, item.artworkUrl60);
+  const releaseDate = firstString(item.releaseDate);
   return {
     source: "itunes",
+    wrapperType: item.wrapperType ?? null,
+    kind: item.kind ?? null,
     trackId: item.trackId ?? null,
     artistId: item.artistId ?? null,
     collectionId: item.collectionId ?? null,
     track: firstString(item.trackName, item.trackCensoredName),
+    censoredTrack: firstString(item.trackCensoredName),
     artist: firstString(item.artistName),
     album: firstString(item.collectionName, item.collectionCensoredName),
+    censoredAlbum: firstString(item.collectionCensoredName),
+    collectionArtist: firstString(item.collectionArtistName),
+    collectionArtistId: item.collectionArtistId ?? null,
     duration: Number.isFinite(Number(item.trackTimeMillis)) ? Number(item.trackTimeMillis) / 1000 : null,
-    artworkUrl: firstString(item.artworkUrl100, item.artworkUrl60)?.replace(/100x100bb\./i, "600x600bb.") || null,
+    durationMs: Number.isFinite(Number(item.trackTimeMillis)) ? Number(item.trackTimeMillis) : null,
+    artworkUrl: artwork?.replace(/\d+x\d+bb\./i, "600x600bb.") || null,
+    artworkUrl60: firstString(item.artworkUrl60),
     artworkUrl100: firstString(item.artworkUrl100),
-    trackUrl: firstString(item.trackViewUrl, item.collectionViewUrl),
+    artworkUrl600: artwork?.replace(/\d+x\d+bb\./i, "600x600bb.") || null,
+    trackUrl: firstString(item.trackViewUrl),
     artistUrl: firstString(item.artistViewUrl),
     albumUrl: firstString(item.collectionViewUrl),
-    releaseDate: firstString(item.releaseDate),
+    previewUrl: firstString(item.previewUrl),
+    releaseDate,
+    releaseYear: releaseDate ? Number(releaseDate.slice(0, 4)) || null : null,
     trackNumber: item.trackNumber ?? null,
     discNumber: item.discNumber ?? null,
+    trackCount: item.trackCount ?? null,
     genre: firstString(item.primaryGenreName),
-    explicit: item.trackExplicitness === "explicit",
+    genres: Array.isArray(item.genres) ? item.genres : (item.primaryGenreName ? [item.primaryGenreName] : []),
+    explicit: item.trackExplicitness === "explicit" || item.collectionExplicitness === "explicit",
+    contentAdvisoryRating: firstString(item.contentAdvisoryRating, item.trackExplicitness, item.collectionExplicitness),
     country: firstString(item.country),
+    currency: firstString(item.currency),
+    trackPrice: Number.isFinite(Number(item.trackPrice)) ? item.trackPrice : null,
+    albumPrice: Number.isFinite(Number(item.collectionPrice)) ? item.collectionPrice : null,
+    copyright: firstString(item.copyright),
+    isStreamable: typeof item.isStreamable === "boolean" ? item.isStreamable : null,
     isrc: firstString(item.isrc)
   };
 }
@@ -733,7 +754,10 @@ async function lookupItunesMetadata(input, country = "US") {
     .sort((a, b) => b.score - a.score);
   const best = ranked[0];
   if (!best || best.score < (input.artist && input.track ? 8 : 1)) return null;
-  return { ...itunesMetadataFromResult(best.item), matchScore: best.score };
+  const alternatives = ranked.slice(1, 5)
+    .filter(entry => entry.score >= Math.max(0, best.score - 5))
+    .map(entry => ({ ...itunesMetadataFromResult(entry.item), matchScore: entry.score }));
+  return { ...itunesMetadataFromResult(best.item), matchScore: best.score, alternatives };
 }
 
 async function handle(req) {
