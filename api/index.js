@@ -59,6 +59,7 @@ function normalizeLyrics(data, provider, formatHint = null) {
   const ttml = firstString(data.ttml, data.lyricsTtml, nested?.ttml,
     typeof data.lyrics === "string" && /<tt\b/i.test(data.lyrics) ? data.lyrics : null,
     typeof nested?.lyrics === "string" && /<tt\b/i.test(nested.lyrics) ? nested.lyrics : null);
+  const syncLyrics = Array.isArray(data.syncLyrics) ? data.syncLyrics : Array.isArray(nested?.syncLyrics) ? nested.syncLyrics : null;
   const candidates = [
     data.syncedLyrics, data.synced_lyrics, data.lrc, data.lrcLyrics,
     typeof data.lyrics === "string" && !/<tt\b/i.test(data.lyrics) ? data.lyrics : null,
@@ -87,12 +88,15 @@ function normalizeLyrics(data, provider, formatHint = null) {
     syncedLyrics: cleanSynced,
     // LRCLIB's lyricsfile may contain word-level timing not present in plain LRC.
     lyricsfile: firstString(data.lyricsfile, data.lyrics_file, data.data?.lyricsfile),
-    hasWordSync: typeof data.hasWordSync === "boolean" ? data.hasWordSync : null,
+    hasWordSync: typeof data.hasWordSync === "boolean" ? data.hasWordSync :
+      (syncLyrics ? syncLyrics.some(line => Array.isArray(line?.syllables) && line.syllables.length > 0) : null),
+    syncLyrics,
     ttml: cleanTtml,
     format,
     syncLevel: cleanTtml ? inferSyncLevel(cleanTtml) :
       (data.hasWordSync === true && firstString(data.lyricsfile, data.lyrics_file, data.data?.lyricsfile) ? "word" :
-      cleanSynced ? "line" : "none"),
+      syncLyrics?.some(line => Array.isArray(line?.syllables) && line.syllables.length) ? "word" :
+      (cleanSynced ? "line" : "none")),
     provider
   };
 }
@@ -233,6 +237,10 @@ const providers = [
   { id: "vgjr-deezer", async search(input) {
     return normalizeMany(await request(`https://api.vgjr.top/lyrics/deezer?q=${encodeURIComponent(input.query)}`), "vgjr-deezer");
   }},
+  { id: "popcat", fallbackOnly: true, async search(input) {
+    const data = await request(`https://api.popcat.xyz/v2/lyrics?song=${encodeURIComponent(input.query || input.track)}`);
+    return normalizeMany(data, "popcat");
+  }},
   { id: "lrc-red", async search(input) {
     const isrc = text(input.isrc).toUpperCase();
     if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(isrc)) return [];
@@ -283,7 +291,7 @@ export default async function handler(req) {
     return json({ error: "invalid_duration", message: "duration must be between 0 and 3600 seconds." }, 400);
   if (!["word", "line", "plain", "best"].includes(prefer))
     return json({ error: "invalid_prefer", message: "prefer must be word, line, plain, or best." }, 400);
-  const selected = providers.filter(p => !provider || p.id === provider);
+  const selected = providers.filter(p => !provider || p.id === provider).filter(p => provider || !p.fallbackOnly);
   if (provider && !selected.length) return json({ error: "unknown_provider", providers: providers.map(p => p.id) }, 400);
   const input = { track, artist, album, duration, isrc, query };
   const settled = await Promise.allSettled(selected.map(async p => {
@@ -296,6 +304,11 @@ export default async function handler(req) {
         error: r.reason?.name === "AbortError" ? "timeout" : r.reason?.status === 429 ? "rate_limited" : "unavailable",
         retryAfter: r.reason?.retryAfter || null });
   let results = dedupe(settled.flatMap(r => r.status === "fulfilled" ? r.value.results : []));
+  // Popcat is deliberately a last fallback, not a parallel first-choice source.
+  if (!results.length && !provider) {
+    try { results = dedupe(await providers.find(p => p.id === "popcat").search(input)); }
+    catch { /* a failed fallback should not fail the whole aggregator */ }
+  }
   results = results.map(result => ({ ...result, matchScore: titleArtistScore(result, input) }));
   // Metadata mismatches are excluded when the caller provides both title and artist.
   if (track && artist) results = results.filter(result => result.matchScore >= 0);
