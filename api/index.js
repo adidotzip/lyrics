@@ -1,5 +1,5 @@
 const VERSION = "0.2.1";
-const TIMEOUT_MS = 5000;
+const TIMEOUT_MS = 7000;
 const USER_AGENT = `AdiLyrics/${VERSION} (https://github.com/adidotzip/lyrics)`;
 
 const cors = {
@@ -27,6 +27,15 @@ function xmlDecode(value) {
  // <span xml:lang="zh-CN">...</span>, sometimes without a ttm:role attribute.
 function stripTtmlTranslations(ttml) {
   if (typeof ttml !== "string" || !ttml) return ttml;
+  // Only strip Chinese translation spans when the primary lyric text is
+  // English. This avoids damaging Chinese-language songs or their originals.
+  const withoutChineseSpans = ttml.replace(/<span\b[^>]*xml:lang=["']zh(?:-[^"']*)?["'][^>]*>[\s\S]*?<\/span>/gi, "");
+  const rootLanguage = ttml.match(/<tt\b[^>]*xml:lang=["']([^"']+)["']/i)?.[1] || "";
+  const letters = withoutChineseSpans.replace(/<[^>]*>/g, "").match(/[A-Za-z\u3400-\u9fff]/g) || [];
+  const latinLetters = letters.filter(char => /[A-Za-z]/.test(char)).length;
+  const isEnglishPrimary = /^en(?:-|$)/i.test(rootLanguage) ||
+    (letters.length > 0 && latinLetters / letters.length >= 0.6);
+  if (!isEnglishPrimary) return ttml;
   const tokens = ttml.match(/<[^>]+>|[^<]+/g) || [];
   const stack = [];
   const output = [];
@@ -54,9 +63,10 @@ function stripTtmlTranslations(ttml) {
     const parentDropped = stack.some(entry => entry.drop);
     const role = attrs.match(/(?:[\w.-]+:)?role\s*=\s*["']([^"']+)["']/i)?.[1] || "";
     const lang = attrs.match(/xml:lang\s*=\s*["']([^"']+)["']/i)?.[1] || "";
-    const isTranslation = /translation/i.test(role) ||
-      (name.toLowerCase().endsWith(":span") || name.toLowerCase() === "span") &&
-      /^zh(?:-|$)/i.test(lang);
+    const isChineseTranslation = /^zh(?:-|$)/i.test(lang) &&
+      (name.toLowerCase().endsWith(":span") || name.toLowerCase() === "span");
+    const isTranslation = isChineseTranslation ||
+      (/translation/i.test(role) && /^zh(?:-|$)/i.test(lang));
     const drop = parentDropped || isTranslation;
     if (!drop) output.push(token);
     if (!selfClosing) stack.push({ name, drop });
