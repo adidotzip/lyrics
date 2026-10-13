@@ -355,17 +355,50 @@ const providers = [
     const data = await request(`https://api.popcat.xyz/v2/lyrics?song=${encodeURIComponent(input.query || input.track)}`);
     return normalizeMany(data, "popcat");
   }},
-  { id: "lrc-red", async search(input) {
+  { id: "lrcmux", async search(input) {
+    const artist = text(input.artist);
+    const title = text(input.track || input.query);
     const isrc = text(input.isrc).toUpperCase();
-    if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(isrc)) return [];
-    const base = `https://lrc.red/s/${encodeURIComponent(isrc)}`;
-    let meta;
-    try { meta = await request(`${base}.json`); } catch {}
-    const found = normalizeMany(meta, "lrc-red");
-    if (found.length) return found;
-    const raw = await request(`${base}.lrc`);
-    const lyrics = typeof raw === "string" ? raw.trim() : null;
-    return lyrics ? normalizeMany(lyrics, "lrc-red") : [];
+    // lrcmux requires either an ISRC or both artist and title.
+    if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(isrc) && (!artist || !title)) return [];
+    const params = new URLSearchParams({ format: "json", level: "word" });
+    if (isrc) params.set("isrc", isrc);
+    else {
+      params.set("artist", artist);
+      params.set("title", title);
+    }
+    if (input.album) params.set("album", input.album);
+    if (input.duration != null) params.set("duration", String(Math.round(input.duration)));
+    const data = await request(`https://api.lrcmux.dev/get?${params}`);
+    if (!data || typeof data !== "object" || !Array.isArray(data.lines) || !data.lines.length) return [];
+    const track = data.track || {};
+    const lines = data.lines.filter(line => typeof line?.text === "string" && line.text.trim());
+    if (!lines.length) return [];
+    const plainLyrics = lines.map(line => line.text.trim()).join("\\n");
+    const syncLyrics = lines.filter(line => Number.isFinite(Number(line.start))).map(line => ({
+      startTimeMs: Number(line.start),
+      words: line.text,
+      syllables: Array.isArray(line.words) ? line.words : []
+    }));
+    const syncedLyrics = syncArrayToLrc(syncLyrics);
+    const level = data.meta?.level || "none";
+    const wordSync = level === "word" && lines.some(line => Array.isArray(line.words) && line.words.length > 0);
+    return [{
+      track: firstString(track.title, title),
+      artist: firstString(track.artist, artist),
+      album: firstString(track.album, input.album),
+      duration: Number.isFinite(Number(track.duration)) ? Number(track.duration) : input.duration ?? null,
+      instrumental: data.meta?.instrumental === true,
+      plainLyrics,
+      syncedLyrics,
+      ttml: null,
+      format: "lrcmux-json",
+      syncLevel: wordSync ? "word" : level === "line" ? "line" : "none",
+      hasWordSync: wordSync,
+      syncLyrics,
+      provider: "lrcmux",
+      confidence: null
+    }];
   }}
 ];
 
