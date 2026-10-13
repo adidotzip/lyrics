@@ -176,12 +176,12 @@ function normalizeLyrics(data, provider, formatHint = null) {
     provider
   };
 }
-async function request(url) {
+async function request(url, extraHeaders = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const response = await fetch(url, { signal: controller.signal, headers: {
-      accept: "application/json, text/plain, */*", "user-agent": USER_AGENT
+      accept: "application/json, text/plain, */*", "user-agent": USER_AGENT, ...extraHeaders
     }});
     const body = await response.text();
     if (body.length > 1500000) throw new Error("Provider response too large");
@@ -360,7 +360,7 @@ const providers = [
     const trackId = text(input.spotifyTrackId);
     const apiKey = text(process.env.Spicy);
     if (!trackId || !/^[A-Za-z0-9]{22}$/.test(trackId) || !apiKey) return [];
-    const response = await request(`https://api.spicylyrics.org/v1/lyrics/${encodeURIComponent(trackId)}`);
+    const response = await request(`https://api.spicylyrics.org/v1/lyrics/${encodeURIComponent(trackId)}`, { authorization: `Bearer ${apiKey}` });
     const body = response?.Body ?? response?.body ?? response?.data?.Body ?? response?.data;
     if (!body || typeof body !== "object" || !Array.isArray(body.Content)) return [];
     const segments = body.Content.filter(segment => segment?.Type === "Vocal" && segment?.Lead);
