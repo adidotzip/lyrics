@@ -440,55 +440,86 @@ const providers = [
   { id: "lrcmux", priority: 90, async search(input) {
     let artist = text(input.artist);
     let title = text(input.track);
-    const isrc = text(input.isrc).toUpperCase();
     // Accept "Title - Artist" as a convenience when callers only provide q.
     if (!artist && !title && input.query) {
-      const parts = input.query.split(/\s+-\s+/);
+      const parts = input.query.split(/\\s+-\\s+/);
       if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
         title = parts[0].trim();
         artist = parts[1].trim();
       }
     }
-    // lrcmux requires either an ISRC or both artist and title.
-    if (!/^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(isrc) && (!artist || !title)) return [];
-    const params = new URLSearchParams({ format: "json", level: "word" });
-    if (isrc) params.set("isrc", isrc);
-    else {
-      params.set("artist", artist);
-      params.set("title", title);
-    }
+    if (!artist || !title) return [];
+
+    const params = new URLSearchParams({ artist, title });
     if (input.album) params.set("album", input.album);
     if (input.duration != null) params.set("duration", String(Math.round(input.duration)));
-    const data = await request(`https://api.lrcmux.dev/get?${params}`);
-    if (!data || typeof data !== "object" || !Array.isArray(data.lines) || !data.lines.length) return [];
-    const track = data.track || {};
-    const lines = data.lines.filter(line => typeof line?.text === "string" && line.text.trim());
+    const data = await request(`https://api.lrcmux.dev/compat/kpoe/v2/lyrics/get?${params}`);
+    if (!data || typeof data !== "object") return [];
+
+    // The KPoe compatibility route can wrap its payload. Accept the common
+    // envelope shapes while keeping one normalized Adi Lyrics response.
+    const payload = data.data && typeof data.data === "object" ? data.data :
+      data.result && typeof data.result === "object" ? data.result : data;
+    const rawLines = Array.isArray(payload.lines) ? payload.lines :
+      Array.isArray(payload.lyrics) ? payload.lyrics :
+      Array.isArray(payload.content) ? payload.content :
+      Array.isArray(data.lines) ? data.lines :
+      Array.isArray(data.lyrics) ? data.lyrics : [];
+    if (!rawLines.length) {
+      // Some compatibility responses already use the standard lyrics schema.
+      return normalizeMany(data, "lrcmux").map(item => ({ ...item, provider: "lrcmux" }));
+    }
+
+    const lines = rawLines.map(line => {
+      if (typeof line === "string") return { text: line };
+      if (!line || typeof line !== "object") return null;
+      const textValue = firstString(line.text, line.lyric, line.content,
+        Array.isArray(line.words) ? line.words.map(word =>
+          typeof word === "string" ? word : firstString(word?.text, word?.word, word?.syllable) || ""
+        ).join("") : null);
+      if (!textValue) return null;
+      const rawStart = line.startTimeMs ?? line.start_time_ms ?? line.startTime ??
+        line.start_time ?? line.start ?? line.time ?? line.timestamp;
+      const rawEnd = line.endTimeMs ?? line.end_time_ms ?? line.endTime ??
+        line.end_time ?? line.end;
+      const start = rawStart == null ? null : Number(rawStart);
+      const end = rawEnd == null ? null : Number(rawEnd);
+      // Explicit *Ms fields and KPoe-style numeric startTime values are in ms.
+      return { ...line, text: textValue, start: Number.isFinite(start) ? start : null,
+        end: Number.isFinite(end) ? end : null };
+    }).filter(Boolean);
     if (!lines.length) return [];
-    const plainLyrics = lines.map(line => line.text.trim()).join("\n");
-    const syncLyrics = lines.filter(line => Number.isFinite(Number(line.start))).map(line => ({
-      startTimeMs: Number(line.start),
+
+    const plainLyrics = lines.map(line => line.text.trim()).filter(Boolean).join("\\n");
+    const syncLyrics = lines.filter(line => line.start != null && line.start >= 0).map(line => ({
+      startTimeMs: line.start,
       words: line.text,
       syllables: Array.isArray(line.words) ? line.words : []
     }));
     const syncedLyrics = syncArrayToLrc(syncLyrics);
-    const level = data.meta?.level || "none";
-    const wordSync = level === "word" && lines.some(line => Array.isArray(line.words) && line.words.length > 0);
+    const metadata = payload.meta || data.meta || {};
+    const track = payload.track && typeof payload.track === "object" ? payload.track : {};
+    const wordSync = lines.some(line => Array.isArray(line.words) && line.words.length > 0) ||
+      /word|syllable/i.test(String(metadata.level || payload.level || data.level || ""));
     return [{
-      track: firstString(track.title, title),
-      artist: firstString(track.artist, artist),
-      album: firstString(track.album, input.album),
-      duration: track.duration != null && Number.isFinite(Number(track.duration))
-        ? Number(track.duration) : input.duration ?? null,
-      instrumental: data.meta?.instrumental === true,
+      track: firstString(track.title, payload.title, payload.trackName, payload.track_name, title),
+      artist: firstString(track.artist, payload.artist, payload.artistName, payload.artist_name, artist),
+      album: firstString(track.album, payload.album, payload.albumName, input.album),
+      duration: (() => {
+        const value = track.duration ?? payload.duration ?? input.duration;
+        const n = Number(value);
+        return value != null && Number.isFinite(n) ? (n > 3600 ? n / 1000 : n) : null;
+      })(),
+      instrumental: metadata.instrumental === true || payload.instrumental === true,
       plainLyrics,
       syncedLyrics,
-      ttml: null,
-      format: "lrcmux-json",
-      syncLevel: wordSync ? "word" : level === "line" ? "line" : "none",
+      ttml: firstString(payload.ttml, payload.lyricsTtml),
+      format: "lrcmux-compat",
+      syncLevel: wordSync ? "word" : syncedLyrics ? "line" : "none",
       hasWordSync: wordSync,
       syncLyrics,
       provider: "lrcmux",
-      upstream: data.meta?.source || null,
+      upstream: firstString(metadata.source, payload.source, data.source),
       confidence: null
     }];
   }}
