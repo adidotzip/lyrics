@@ -41,6 +41,21 @@ curl "https://lyrics.imreallyadi.space/api/metadata?track=Blinding%20Lights&arti
 
 Optional parameters: `album`, `duration` (seconds), `q` (free-text search), and `country` (two-letter iTunes storefront code, default `US`). The regular lyrics and search endpoints also include a top-level `metadata` object from iTunes and attach it to the canonical `lyrics` result when a match is found. Catalog metadata lookup is independent of lyrics-provider selection, and an iTunes lookup failure does not prevent lyrics lookup.
 
+### Music catalog endpoints
+
+These endpoints use Apple's public iTunes Search/Lookup APIs and Apple Music RSS charts. They do not require an Apple Music developer token.
+
+| Endpoint | Purpose | Example |
+| --- | --- | --- |
+| `GET /api/music/search?q=...` | Search songs, albums, artists, and music videos | `/api/music/search?q=Daft%20Punk&type=artist` |
+| `GET /api/music/lookup?id=...` | Look up a catalog ID | `/api/music/lookup?id=909253&entity=album` |
+| `GET /api/music/artist?id=...` | Look up an artist and their albums | `/api/music/artist?id=909253` |
+| `GET /api/music/album?id=...` | Look up an album and its tracks | `/api/music/album?id=1440857781` |
+| `GET /api/music/song?id=...` | Look up a song by ID | `/api/music/song?id=1440857782` |
+| `GET /api/music/top?type=songs` | Get current chart listings | `/api/music/top?type=albums&country=US&limit=25` |
+
+Search accepts `q` or `term`, `type=all|song|album|artist|musicVideo`, `country` (two-letter storefront code), and `limit`. Lookup accepts `id` plus optional `entity=song|album|artist|musicVideo`. The artist endpoint defaults to albums; the album endpoint defaults to songs. Top charts accept `type=songs|albums|music-videos`, `country`, and `limit` (up to 100). IDs are Apple/iTunes catalog IDs, not local database IDs.
+
 ### `GET /api/health`
 
 Returns the API version and supported providers.
