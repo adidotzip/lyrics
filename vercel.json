@@ -5,6 +5,10 @@
       "destination": "/api/index.js"
     },
     {
+      "source": "/api/search",
+      "destination": "/api/index.js"
+    },
+    {
       "source": "/api/health",
       "destination": "/api/index.js"
     }
