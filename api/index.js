@@ -365,7 +365,7 @@ const providers = [
     if (query) {
       try {
         const params = new URLSearchParams({ q: query });
-        const searchData = await request(\`https://lrc.red/api/v1?\${params}\`);
+        const searchData = await request(`https://lrc.red/api/v1?${params}`);
         const list = Array.isArray(searchData) ? searchData :
           Array.isArray(searchData?.results) ? searchData.results :
           Array.isArray(searchData?.data?.results) ? searchData.data.results :
@@ -424,7 +424,7 @@ const providers = [
     if (validIsrc) {
       for (const extension of ["ttml", "lrc", "json"]) {
         try {
-          const body = await request(\`https://lrc.red/s/\${encodeURIComponent(isrc)}.\${extension}\`);
+          const body = await request(`https://lrc.red/s/${encodeURIComponent(isrc)}.${extension}`);
           const found = normalizeMany(body, "lrc-red", extension === "lrc" ? "lrc" : null);
           if (found.length) return found.map(item => ({ ...item, track: item.track || input.track || null,
             artist: item.artist || input.artist || null, confidence: 100 }));
@@ -464,7 +464,7 @@ const providers = [
     const track = data.track || {};
     const lines = data.lines.filter(line => typeof line?.text === "string" && line.text.trim());
     if (!lines.length) return [];
-    const plainLyrics = lines.map(line => line.text.trim()).join("\\n");
+    const plainLyrics = lines.map(line => line.text.trim()).join("\n");
     const syncLyrics = lines.filter(line => Number.isFinite(Number(line.start))).map(line => ({
       startTimeMs: Number(line.start),
       words: line.text,
