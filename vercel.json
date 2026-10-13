@@ -9,6 +9,10 @@
       "destination": "/api/index.js"
     },
     {
+      "source": "/api/metadata",
+      "destination": "/api/index.js"
+    },
+    {
       "source": "/api/health",
       "destination": "/api/index.js"
     }
