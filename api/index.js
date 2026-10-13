@@ -760,10 +760,143 @@ async function lookupItunesMetadata(input, country = "US") {
   return { ...itunesMetadataFromResult(best.item), matchScore: best.score, alternatives };
 }
 
+
+function normalizeItunesCatalogItem(item) {
+  if (!item || typeof item !== "object") return null;
+  const artwork = firstString(item.artworkUrl100, item.artworkUrl60, item.artwork?.url);
+  const trackName = firstString(item.trackName, item.trackCensoredName, item.name);
+  const albumName = firstString(item.collectionName, item.collectionCensoredName, item.albumName);
+  const artistName = firstString(item.artistName, item.name && (item.wrapperType === "artist" || item.kind === "artist") ? item.name : null);
+  const releaseDate = firstString(item.releaseDate);
+  const durationMs = Number(item.trackTimeMillis ?? item.durationInMillis);
+  return {
+    id: item.trackId ?? item.collectionId ?? item.artistId ?? item.id ?? null,
+    type: firstString(item.kind, item.wrapperType, item.type) || "unknown",
+    track: trackName,
+    artist: artistName,
+    album: albumName,
+    trackId: item.trackId ?? null,
+    artistId: item.artistId ?? null,
+    collectionId: item.collectionId ?? null,
+    artworkUrl: artwork?.replace(/\\d+x\\d+bb\\./i, "600x600bb.") || null,
+    artworkUrl100: firstString(item.artworkUrl100),
+    previewUrl: firstString(item.previewUrl),
+    trackUrl: firstString(item.trackViewUrl),
+    artistUrl: firstString(item.artistViewUrl),
+    albumUrl: firstString(item.collectionViewUrl),
+    duration: Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : null,
+    durationMs: Number.isFinite(durationMs) && durationMs > 0 ? durationMs : null,
+    releaseDate,
+    releaseYear: releaseDate ? Number(releaseDate.slice(0, 4)) || null : null,
+    genre: firstString(item.primaryGenreName, item.genreNames?.[0]),
+    genres: Array.isArray(item.genres) ? item.genres : (Array.isArray(item.genreNames) ? item.genreNames : (item.primaryGenreName ? [item.primaryGenreName] : [])),
+    trackNumber: item.trackNumber ?? null,
+    discNumber: item.discNumber ?? null,
+    trackCount: item.trackCount ?? null,
+    explicit: item.trackExplicitness === "explicit" || item.collectionExplicitness === "explicit" || item.contentAdvisoryRating === "explicit",
+    country: firstString(item.country),
+    currency: firstString(item.currency),
+    isrc: firstString(item.isrc)
+  };
+}
+const ITUNES_ENTITIES = {
+  song: "song",
+  album: "album",
+  artist: "musicArtist",
+  musicVideo: "musicVideo"
+};
+async function searchItunesCatalog(term, type = "all", country = "US", limit = 25) {
+  const params = new URLSearchParams({
+    term, country, media: "music",
+    limit: String(Math.max(1, Math.min(50, limit)))
+  });
+  if (type !== "all") {
+    const entity = ITUNES_ENTITIES[type];
+    if (!entity) throw new Error("invalid_music_type");
+    params.set("entity", entity);
+  }
+  const data = await request(`https://itunes.apple.com/search?${params}`);
+  const results = Array.isArray(data?.results) ? data.results : [];
+  return { resultCount: Number(data?.resultCount ?? results.length), results: results.map(normalizeItunesCatalogItem).filter(Boolean) };
+}
+async function lookupItunesCatalog(id, entity = "", country = "US", limit = 50) {
+  const params = new URLSearchParams({ id: String(id), country, limit: String(Math.max(1, Math.min(200, limit))) });
+  if (entity) {
+    const mapped = ITUNES_ENTITIES[entity] || entity;
+    if (!["song", "album", "musicArtist", "musicVideo"].includes(mapped)) throw new Error("invalid_music_entity");
+    params.set("entity", mapped);
+  }
+  const data = await request(`https://itunes.apple.com/lookup?${params}`);
+  const results = Array.isArray(data?.results) ? data.results : [];
+  return { resultCount: Number(data?.resultCount ?? results.length), results: results.map(normalizeItunesCatalogItem).filter(Boolean) };
+}
+async function getItunesTop(type = "songs", country = "us", limit = 25) {
+  if (!["songs", "albums", "music-videos"].includes(type)) throw new Error("invalid_chart_type");
+  const safeCountry = /^[a-z]{2}$/i.test(country) ? country.toLowerCase() : "us";
+  const safeLimit = Math.max(1, Math.min(100, limit));
+  const data = await request(`https://rss.marketingtools.apple.com/api/v2/${safeCountry}/music/most-played/${safeLimit}/${type}.json`);
+  const feed = data?.feed || {};
+  const results = Array.isArray(feed.results) ? feed.results : [];
+  return {
+    country: safeCountry.toUpperCase(),
+    type,
+    title: firstString(feed.title),
+    updated: firstString(feed.updated),
+    resultCount: results.length,
+    results: results.map(item => ({
+      id: item.id || null,
+      type: item.type || type.replace(/s$/, ""),
+      track: item.name || null,
+      artist: item.artistName || null,
+      album: item.name && type === "albums" ? item.name : null,
+      artworkUrl: firstString(item.artworkUrl100, item.artwork?.url),
+      url: firstString(item.url),
+      releaseDate: firstString(item.releaseDate),
+      genres: Array.isArray(item.genres) ? item.genres.map(genre => genre.name).filter(Boolean) : []
+    }))
+  };
+}
+
 async function handle(req) {
   const url = new URL(req.url, "http://localhost");
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (req.method !== "GET") return json({ error: "method_not_allowed", message: "Use GET." }, 405);
+  const country = (text(url.searchParams.get("country")) || "US").toUpperCase().slice(0, 2);
+  const musicPath = url.pathname.replace(/\\/$/, "");
+  if (musicPath.startsWith("/api/music/") || musicPath.startsWith("/music/")) {
+    const route = musicPath.split("/").pop();
+    const id = text(url.searchParams.get("id") || url.searchParams.get("artistId") || url.searchParams.get("albumId") || url.searchParams.get("trackId"));
+    const limitValue = Number(url.searchParams.get("limit") || 25);
+    const limit = Number.isFinite(limitValue) ? Math.max(1, Math.min(100, Math.floor(limitValue))) : 25;
+    try {
+      if (route === "search") {
+        const term = text(url.searchParams.get("q") || url.searchParams.get("term"));
+        const type = (text(url.searchParams.get("type")) || "all");
+        if (!term) return json({ error: "missing_query", message: "Provide q or term." }, 400);
+        if (!["all", "song", "album", "artist", "musicVideo"].includes(type))
+          return json({ error: "invalid_music_type", supported: ["all", "song", "album", "artist", "musicVideo"] }, 400);
+        const result = await searchItunesCatalog(term, type, country, limit);
+        return json({ api: "Adi Lyrics", source: "itunes", query: term, type, ...result });
+      }
+      if (route === "lookup" || route === "artist" || route === "album" || route === "song") {
+        if (!id) return json({ error: "missing_id", message: "Provide id, artistId, albumId, or trackId." }, 400);
+        const entity = text(url.searchParams.get("entity")) || (route === "artist" ? "album" : route === "album" ? "song" : route === "song" ? "song" : "");
+        const result = await lookupItunesCatalog(id, entity, country, limit);
+        return json({ api: "Adi Lyrics", source: "itunes", id, entity: entity || null, ...result });
+      }
+      if (route === "top") {
+        const type = (text(url.searchParams.get("type")) || "songs").toLowerCase();
+        const result = await getItunesTop(type, country.toLowerCase(), limit);
+        return json({ api: "Adi Lyrics", source: "apple-music-rss", ...result });
+      }
+      return json({ error: "not_found", message: "Try /api/music/search, /api/music/lookup, /api/music/artist, /api/music/album, /api/music/song, or /api/music/top." }, 404);
+    } catch (error) {
+      const message = error?.message || "";
+      const invalid = message.startsWith("invalid_");
+      return json({ api: "Adi Lyrics", error: invalid ? message : "music_catalog_unavailable",
+        message: invalid ? message : "Apple music catalog request failed." }, invalid ? 400 : 502);
+    }
+  }
   if (["/api/health", "/health"].includes(url.pathname)) return json({
     ok: true, name: "Adi Lyrics", version: VERSION, providers: providers.map(p => p.id),
     syncPreference: ["word", "line", "plain"]
@@ -778,7 +911,6 @@ async function handle(req) {
   const duration = durationValue !== null && durationValue !== "" ? Number(durationValue) : null;
   const isrc = text(url.searchParams.get("isrc"));
   const query = text(url.searchParams.get("q")) || [track, artist].filter(Boolean).join(" ");
-  const country = (text(url.searchParams.get("country")) || "US").toUpperCase().slice(0, 2);
   const provider = text(url.searchParams.get("provider"));
   const prefer = text(url.searchParams.get("prefer")) || "word";
   if (!query && !isrc) return json({ error: "missing_query", message: "Provide q or track. Optional: artist, album, duration, isrc, provider, prefer." }, 400);
