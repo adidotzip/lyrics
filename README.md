@@ -33,7 +33,7 @@ Supported provider IDs: `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc
 
 ### `GET /api/metadata`
 
-Uses Apple's public iTunes Search API as the catalog metadata source. It returns a best-matching song with Apple track, artist, and album IDs; artwork and store URLs; duration; release date; track/disc number; genre; and explicit-content status. No Apple developer token is required for the public iTunes Search API.
+Uses Apple's public iTunes Search API as the catalog metadata source. It returns a best-matching song with Apple track, artist, and album IDs; artwork and store URLs, preview URL, duration in seconds and milliseconds, release date and year, track/disc number, track count, genres, content advisory, pricing/currency, copyright, streaming availability when supplied, and explicit-content status. It also returns up to four close alternate editions when Apple returns comparable matches. No Apple developer token is required for the public iTunes Search API.
 
 ```sh
 curl "https://lyrics.imreallyadi.space/api/metadata?track=Blinding%20Lights&artist=The%20Weeknd"
