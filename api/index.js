@@ -298,20 +298,26 @@ export default async function handler(req) {
     const results = await p.search(input);
     return { results, count: results.length };
   }));
-  const statuses = settled.map((r, i) => r.status === "fulfilled"
+  let statuses = settled.map((r, i) => r.status === "fulfilled"
     ? { provider: selected[i].id, ok: true, count: r.value.count }
     : { provider: selected[i].id, ok: false,
         error: r.reason?.name === "AbortError" ? "timeout" : r.reason?.status === 429 ? "rate_limited" : "unavailable",
         retryAfter: r.reason?.retryAfter || null });
   let results = dedupe(settled.flatMap(r => r.status === "fulfilled" ? r.value.results : []));
-  // Popcat is deliberately a last fallback, not a parallel first-choice source.
-  if (!results.length && !provider) {
-    try { results = dedupe(await providers.find(p => p.id === "popcat").search(input)); }
-    catch { /* a failed fallback should not fail the whole aggregator */ }
-  }
   results = results.map(result => ({ ...result, matchScore: titleArtistScore(result, input) }));
   // Metadata mismatches are excluded when the caller provides both title and artist.
   if (track && artist) results = results.filter(result => result.matchScore >= 0);
+  // Popcat is deliberately last-resort, after matching has rejected any wrong-track results.
+  if (!results.length && !provider) {
+    try {
+      results = dedupe(await providers.find(p => p.id === "popcat").search(input))
+        .map(result => ({ ...result, matchScore: titleArtistScore(result, input) }));
+      statuses = [...statuses, { provider: "popcat", ok: results.length > 0, count: results.length, fallback: true }];
+    } catch {
+      statuses = [...statuses, { provider: "popcat", ok: false, error: "unavailable", fallback: true }];
+    }
+    if (track && artist) results = results.filter(result => result.matchScore >= 0);
+  }
   const preferenceBonus = result => prefer === "best" ? 0 :
     prefer === "word" ? (result.syncLevel === "word" ? 2.5 : result.syncLevel === "line" ? 0.5 : 0) :
     prefer === "line" ? (result.syncLevel === "line" ? 2 : result.syncLevel === "word" ? 1 : 0) :
