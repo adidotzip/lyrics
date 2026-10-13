@@ -601,17 +601,20 @@ function syllableCacheKey(input) {
 
 function hasSyllableSync(result) {
   if (!result || typeof result !== "object") return false;
-  // BetterLyrics provides syllable-timed TTML; require actual timed spans.
-  if (result.provider === "betterlyrics" && typeof result.ttml === "string" &&
-      /<span\b[^>]*(?:begin|end)=/i.test(result.ttml)) return true;
-
-  // Structured providers must explicitly supply syllables with timing.
   if (result.hasSyllableSync === true) return true;
+
+  // Timed TTML spans are the supported representation for syllable/word-level
+  // karaoke timing across BetterLyrics and other TTML providers.
+  if (typeof result.ttml === "string" &&
+      /<span\b[^>]*\b(?:begin|end)\s*=\s*["'][^"']+["']/i.test(result.ttml) &&
+      /<p\b[^>]*>[\s\S]*?<span\b/i.test(result.ttml)) return true;
+
   const syllableRows = Array.isArray(result.syncLyrics) ? result.syncLyrics : [];
   return syllableRows.some(line => Array.isArray(line?.syllables) &&
     line.syllables.some(syllable => syllable && typeof syllable === "object" &&
-      (syllable.startTimeMs != null || syllable.start != null || syllable.startTime != null) &&
-      firstString(syllable.text, syllable.word, syllable.syllable) !== null));
+      (syllable.startTimeMs != null || syllable.start_time_ms != null ||
+       syllable.start != null || syllable.startTime != null || syllable.start_time != null) &&
+      firstString(syllable.text, syllable.word, syllable.syllable, syllable.content) !== null));
 }
 
 async function readSyllableCache(input, requestedProvider) {
@@ -636,11 +639,13 @@ async function readSyllableCache(input, requestedProvider) {
 }
 
 async function writeSyllableCache(input, result) {
-  if (!hasSyllableSync(result)) return false;
-  const client = getTursoClient();
+  if (!process.env.T) return { saved: false, reason: "missing_T_environment_variable" };
+  if (!hasSyllableSync(result)) return { saved: false, reason: "result_not_syllable_synced" };
   const key = syllableCacheKey(input);
-  if (!client || !key) return false;
+  if (!key) return { saved: false, reason: "missing_cache_key" };
   try {
+    const client = getTursoClient();
+    if (!client) return { saved: false, reason: "database_not_configured" };
     await ensureSyllableCacheTable(client);
     await client.execute({
       sql: `INSERT INTO syllable_lyrics_cache
@@ -664,10 +669,10 @@ async function writeSyllableCache(input, result) {
         JSON.stringify(result)
       ]
     });
-    return true;
+    return { saved: true, reason: "saved" };
   } catch (error) {
-    console.warn("Turso syllable cache write failed:", error?.message || "unknown error");
-    return false;
+    console.error("Turso syllable cache write failed:", error?.message || "unknown error");
+    return { saved: false, reason: "database_write_failed" };
   }
 }
 
@@ -712,6 +717,7 @@ async function handle(req) {
       count: 1,
       lyrics: { ...cached, cached: true },
       best: { ...cached, cached: true },
+      cache: { enabled: true, hit: true, saved: true },
       providers: [{ provider: "turso-cache", ok: true, count: 1, cached: true }]
     });
   }
@@ -763,9 +769,9 @@ async function handle(req) {
   // results array that forces clients to implement their own normalization.
   const best = results[0] || null;
   const syllableCandidate = results.find(hasSyllableSync) || null;
-  if (syllableCandidate) {
-    await writeSyllableCache(input, syllableCandidate);
-  }
+  const cacheWrite = syllableCandidate
+    ? await writeSyllableCache(input, syllableCandidate)
+    : { saved: false, reason: process.env.T ? "no_syllable_synced_result" : "missing_T_environment_variable" };
   return json({
     api: "Adi Lyrics",
     version: VERSION,
@@ -775,6 +781,13 @@ async function handle(req) {
     count: best ? 1 : 0,
     lyrics: best,
     best,
+    cache: {
+      enabled: Boolean(process.env.T),
+      hit: false,
+      candidateProvider: syllableCandidate?.provider || null,
+      saved: cacheWrite.saved,
+      reason: cacheWrite.reason
+    },
     providers: statuses
   });
 }
