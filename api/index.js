@@ -81,6 +81,23 @@ function inferSyncLevel(ttml) {
   if (/<p\b[^>]*(?:begin|end)=/i.test(ttml)) return "line";
   return "none";
 }
+function syncArrayToLrc(lines) {
+  if (!Array.isArray(lines)) return null;
+  const output = [];
+  for (const line of lines) {
+    const milliseconds = Number(line?.startTimeMs ?? line?.start_time_ms);
+    const words = typeof line?.words === "string" ? line.words :
+      Array.isArray(line?.words) ? line.words.map(word => typeof word === "string" ? word : word?.text || "").join("") : "";
+    if (!Number.isFinite(milliseconds) || milliseconds < 0 || !words.trim()) continue;
+    const totalCentiseconds = Math.floor(milliseconds / 10);
+    const minutes = Math.floor(totalCentiseconds / 6000);
+    const seconds = Math.floor((totalCentiseconds % 6000) / 100);
+    const centiseconds = totalCentiseconds % 100;
+    output.push(`[${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(centiseconds).padStart(2, "0")}]${words.trim()}`);
+  }
+  return output.length ? output.join("\n") : null;
+}
+
 function normalizeLyrics(data, provider, formatHint = null) {
   if (typeof data === "string") {
     const raw = data.trim();
@@ -116,14 +133,16 @@ function normalizeLyrics(data, provider, formatHint = null) {
   const raw = firstString(...candidates);
   const synced = firstString(data.syncedLyrics, data.synced_lyrics, data.lrc, data.lrcLyrics,
     nested?.syncedLyrics, nested?.lrc, data.result?.syncedLyrics, data.result?.lrc,
-    raw && /\[\d{1,2}:\d{2}(?:\.\d+)?\]/.test(raw) ? raw : null);
+    raw && /\[\d{1,2}:\d{2}(?:\.\d+)?\]/.test(raw) ? raw : null,
+    syncArrayToLrc(syncLyrics));
   const plain = firstString(data.plainLyrics, data.plain_lyrics, data.lyricsText, nested?.plainLyrics,
     raw && !/<tt\b/i.test(raw) && !/\[\d{1,2}:\d{2}(?:\.\d+)?\]/.test(raw) ? raw : null);
   const cleanTtml = ttml && ttml.length < 500000 ? stripTtmlTranslations(ttml) : null;
   const cleanSynced = synced && synced.length < 300000 ? synced : null;
   const cleanPlain = plain && plain.length < 300000 ? plain : null;
   if (!cleanTtml && !cleanSynced && !cleanPlain) return null;
-  const format = cleanTtml ? "ttml" : cleanSynced ? "lrc" : (formatHint || "plain");
+  const format = cleanTtml ? "ttml" : cleanSynced ? "lrc" :
+    (syncLyrics?.length ? "sync-json" : (formatHint || "plain"));
   return {
     track: firstString(data.trackName, data.track_name, data.title, data.name, data.song, data.musicName, data.musicNames?.[0], nested?.song, nested?.trackName, nested?.title, nested?.name),
     artist: firstString(data.artistName, data.artist_name, data.artist, data.artists?.[0]?.name, data.artists?.[0], data.artistNames?.[0], nested?.artist, nested?.artists?.map?.(item => item?.name).filter(Boolean).join(", ")),
@@ -169,7 +188,16 @@ async function request(url) {
 }
 function normalizeMany(data, provider, formatHint = null) {
   if (data?.success === false) return [];
-  const source = data?.data ?? data;
+  // Some providers (notably VGJR) put track metadata in data.data while
+  // the actual lyrics and syncLyrics live on the outer object. Never unwrap
+  // that envelope when the outer object already contains lyric content.
+  const hasRootLyrics = typeof data?.lyrics === "string" ||
+    typeof data?.ttml === "string" || typeof data?.syncedLyrics === "string" ||
+    Array.isArray(data?.syncLyrics) || typeof data?.plainLyrics === "string";
+  const source = Array.isArray(data) ? data
+    : Array.isArray(data?.data) ? data.data
+    : data?.data && typeof data.data === "object" && !hasRootLyrics ? data.data
+    : data;
   const candidates = Array.isArray(source) ? source
     : Array.isArray(source?.items) ? source.items
     : Array.isArray(source?.results) ? source.results
@@ -225,9 +253,17 @@ const providers = [
     if (!input.track || !input.artist || input.duration == null) return [];
     const params = new URLSearchParams({ s: input.track, a: input.artist,
       al: input.album || input.track, d: String(Math.round(input.duration)) });
-    const data = await request(`https://api.betterlyrics.org/getLyrics?${params}`);
-    if (!data?.ttml) return [];
-    return normalizeMany({ ...data, trackName: input.track, artistName: input.artist,
+    // The default route returns { ttml }, while the provider-specific route
+    // returns { lyrics, provider }. Accept both documented response shapes.
+    let data = null;
+    try { data = await request(`https://api.betterlyrics.org/getLyrics?${params}`); } catch {}
+    if (!data?.ttml && !(typeof data?.lyrics === "string" && /<tt\b/i.test(data.lyrics))) {
+      try { data = await request(`https://api.betterlyrics.org/ttml/getLyrics?${params}`); } catch {}
+    }
+    const ttml = firstString(data?.ttml,
+      typeof data?.lyrics === "string" && /<tt\b/i.test(data.lyrics) ? data.lyrics : null);
+    if (!ttml) return [];
+    return normalizeMany({ ...data, ttml, trackName: input.track, artistName: input.artist,
       albumName: input.album }, "betterlyrics").map(item => ({
         ...item, confidence: typeof data.score === "number" ? data.score : null
       }));
