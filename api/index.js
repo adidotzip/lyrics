@@ -1005,22 +1005,53 @@ async function handle(req) {
     })
   ]);
 
-  // Return cached content only when it was previously verified as syllable-synced.
+  // A preference selects one response shape. Keep diagnostics and alternative
+  // formats out of the public payload so callers cannot accidentally render them.
+  const preferenceProjection = result => {
+    if (!result) return null;
+    const { metadata: _metadata, ...entry } = result;
+    if (prefer === "best") return entry;
+    if (prefer === "line") {
+      const lineLyrics = entry.syncedLyrics || null;
+      return lineLyrics ? {
+        track: entry.track, artist: entry.artist, album: entry.album,
+        duration: entry.duration, instrumental: entry.instrumental,
+        syncedLyrics: lineLyrics, format: "lrc", syncLevel: "line",
+        provider: entry.provider
+      } : null;
+    }
+    if (prefer === "plain") {
+      let plainLyrics = entry.plainLyrics || null;
+      if (!plainLyrics && entry.ttml) plainLyrics = ttmlToText(entry.ttml);
+      if (!plainLyrics && entry.syncedLyrics) {
+        plainLyrics = entry.syncedLyrics.replace(/^\s*\[[^\]]+\]\s*/gm, "").trim() || null;
+      }
+      return plainLyrics ? {
+        track: entry.track, artist: entry.artist, album: entry.album,
+        duration: entry.duration, instrumental: entry.instrumental,
+        plainLyrics, format: "plain", syncLevel: "none",
+        provider: entry.provider
+      } : null;
+    }
+    // "word" remains the default; best available result is preserved for compatibility.
+    return entry;
+  };
+  const selectedResult = result => {
+    const projected = preferenceProjection(result);
+    return projected ? { ...projected, metadata: appleMetadata } : null;
+  };
+
+  // Cached lyrics can satisfy only the requested format. Never return a cached
+  // word-synced object for a line/plain request without projecting it first.
   if (cached) {
-    return json({
-      api: "Adi Lyrics",
-      version: VERSION,
-      query: { track: track || null, artist: artist || null, album: album || null, duration, q: query || null, isrc: isrc || null },
-      preference: prefer,
-      found: true,
-      count: 1,
-      metadata: appleMetadata,
-      lyrics: { ...cached, cached: true, metadata: appleMetadata },
-      best: { ...cached, cached: true, metadata: appleMetadata },
-      cache: { enabled: true, hit: true, saved: true },
-      providers: [{ provider: "turso-cache", ok: true, count: 1, cached: true }]
+    const selectedCached = selectedResult({ ...cached, cached: true });
+    if (selectedCached) return json({
+      api: "Adi Lyrics", version: VERSION,
+      preference: prefer, found: true, count: 1,
+      lyrics: selectedCached, best: selectedCached
     });
   }
+
   const settled = await Promise.allSettled(selected.map(async p => {
     const results = await p.search(input);
     return { results, count: results.length };
@@ -1032,9 +1063,7 @@ async function handle(req) {
         retryAfter: r.reason?.retryAfter || null });
   let results = dedupe(settled.flatMap(r => r.status === "fulfilled" ? r.value.results : []));
   results = results.map(result => ({ ...result, matchScore: titleArtistScore(result, input) }));
-  // Require a real title/artist match. Do not let same-artist search fallbacks win.
   if (track && artist) results = results.filter(result => isPlausibleLyricsMatch(result, input));
-  // Popcat is deliberately last-resort, after matching has rejected any wrong-track results.
   if (!results.length && !provider) {
     try {
       results = dedupe(await providers.find(p => p.id === "popcat").search(input))
@@ -1049,47 +1078,35 @@ async function handle(req) {
     prefer === "word" ? (result.syncLevel === "word" ? 2.5 : result.syncLevel === "line" ? 0.5 : 0) :
     prefer === "line" ? (result.syncLevel === "line" ? 2 : result.syncLevel === "word" ? 1 : 0) :
     (result.syncLevel === "none" ? 2 : 0);
-  const providerPriority = result => {
-    const provider = providers.find(item => item.id === result.provider);
-    return provider?.priority || 0;
-  };
+  const providerPriority = result => providers.find(item => item.id === result.provider)?.priority || 0;
   results.sort((a, b) => {
-    // lrc.red and lrcmux are primary sources; identity mismatches are filtered above.
     const priorityA = providerPriority(a);
     const priorityB = providerPriority(b);
     if (priorityA !== priorityB) return priorityB - priorityA;
-    // Correct track identity and source confidence outweigh the sync format.
     const confidenceA = typeof a.confidence === "number" ? a.confidence * 2 : 0;
     const confidenceB = typeof b.confidence === "number" ? b.confidence * 2 : 0;
     return (b.matchScore + preferenceBonus(b) + confidenceB) -
       (a.matchScore + preferenceBonus(a) + confidenceA);
   });
-  // Return one canonical result regardless of which upstream provider won.
-  // Keep "best" as a compatibility alias, but never return a provider-specific
-  // results array that forces clients to implement their own normalization.
+
   const best = results[0] || null;
+  const selectedLyrics = selectedResult(best);
   const syllableCandidate = results.find(hasSyllableSync) || null;
   const cacheWrite = syllableCandidate
     ? await writeSyllableCache(input, syllableCandidate)
     : { saved: false, reason: process.env.T ? "no_syllable_synced_result" : "missing_T_environment_variable" };
+
+  // Return only the requested content: one best object, line-synced lyrics,
+  // or unsynchronized plain lyrics. Do not expose providers, cache diagnostics,
+  // metadata alternatives, or competing lyric representations here.
   return json({
     api: "Adi Lyrics",
     version: VERSION,
-    query: { track: track || null, artist: artist || null, album: album || null, duration, q: query || null, isrc: isrc || null },
     preference: prefer,
-    found: Boolean(best),
-    count: best ? 1 : 0,
-    metadata: appleMetadata,
-    lyrics: best ? { ...best, metadata: appleMetadata } : null,
-    best: best ? { ...best, metadata: appleMetadata } : null,
-    cache: {
-      enabled: Boolean(process.env.T),
-      hit: false,
-      candidateProvider: syllableCandidate?.provider || null,
-      saved: cacheWrite.saved,
-      reason: cacheWrite.reason
-    },
-    providers: statuses
+    found: Boolean(selectedLyrics),
+    count: selectedLyrics ? 1 : 0,
+    lyrics: selectedLyrics,
+    best: selectedLyrics
   });
 }
 
