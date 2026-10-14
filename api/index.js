@@ -1074,12 +1074,24 @@ async function handle(req) {
     }
     if (track && artist) results = results.filter(result => isPlausibleLyricsMatch(result, input));
   }
+  // Enforce format availability before choosing the winner. Otherwise a higher-ranked
+  // plain-only result can hide a valid line-synced LRCLIB result.
+  if (prefer === "line") results = results.filter(result => Boolean(result.syncedLyrics));
+  if (prefer === "plain") results = results.filter(result => Boolean(result.plainLyrics || result.ttml));
+
   const preferenceBonus = result => prefer === "best" ? 0 :
     prefer === "word" ? (result.syncLevel === "word" ? 2.5 : result.syncLevel === "line" ? 0.5 : 0) :
     prefer === "line" ? (result.syncLevel === "line" ? 2 : result.syncLevel === "word" ? 1 : 0) :
     (result.syncLevel === "none" ? 2 : 0);
   const providerPriority = result => providers.find(item => item.id === result.provider)?.priority || 0;
   results.sort((a, b) => {
+    // For line-synced lyrics, prefer LRCLIB when it has a valid matching result.
+    // Other providers remain eligible if LRCLIB has no line-synced lyrics.
+    if (prefer === "line") {
+      const lrclibA = a.provider === "lrclib" ? 1 : 0;
+      const lrclibB = b.provider === "lrclib" ? 1 : 0;
+      if (lrclibA !== lrclibB) return lrclibB - lrclibA;
+    }
     const priorityA = providerPriority(a);
     const priorityB = providerPriority(b);
     if (priorityA !== priorityB) return priorityB - priorityA;
