@@ -983,7 +983,8 @@ async function handle(req) {
     return json({ error: "invalid_duration", message: "duration must be between 0 and 3600 seconds." }, 400);
   if (!["word", "line", "plain", "best"].includes(prefer))
     return json({ error: "invalid_prefer", message: "prefer must be word, line, plain, or best." }, 400);
-  const selected = providers.filter(p => !provider || p.id === provider).filter(p => provider || !p.fallbackOnly);
+  const selected = providers.filter(p => !provider || p.id === provider)
+    .filter(p => provider || (prefer === "line" ? p.id === "lrclib" : !p.fallbackOnly));
   if (provider && !selected.length) return json({ error: "unknown_provider", providers: providers.map(p => p.id) }, 400);
   const input = { track, artist, album, duration, isrc, query };
   if (["/api/metadata", "/metadata"].includes(url.pathname)) {
@@ -1043,7 +1044,7 @@ async function handle(req) {
 
   // Cached lyrics can satisfy only the requested format. Never return a cached
   // word-synced object for a line/plain request without projecting it first.
-  if (cached) {
+  if (cached && (prefer !== "line" || cached.provider === "lrclib")) {
     const selectedCached = selectedResult({ ...cached, cached: true });
     if (selectedCached) return json({
       api: "Adi Lyrics", version: VERSION,
