@@ -5,7 +5,7 @@ Adi Lyrics is my lyrics API. It searches different lyrics providers and returns 
 API: https://lyrics.adi.rest/
 
 **Please see: https://www.adi.rest/tos && https://www.adi.rest/privacy**
-
+(This API does not collect personal data about the applications using instead it stores the fetched lyrics in a DB; If you have any issues about your API being using in the project please contact me `im.adityasingh@icloud.com`)
 ## Lyrics providers
 
 The API checks multiple sources, including:
@@ -32,7 +32,7 @@ Returns the best lyrics result the API can find.
 Example:
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154"
+curl "https://lyrics.adi.rest/api/lyrics?track=E85&artist=Don%20Toliver&album=OCTANE&duration=154"
 ```
 
 You can use these query parameters:
@@ -55,7 +55,7 @@ The default is `prefer=word`, which prioritizes word or syllable timing while st
 This uses the same lyrics resolver as `/api/lyrics`. You can search with a title or a free-text query.
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/search?q=E85%20Don%20Toliver&prefer=word"
+curl "https://lyrics.adi.rest/api/search?q=E85%20Don%20Toliver&prefer=word"
 ```
 
 Provider IDs include `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-red`, `lrcmux`, `vgjr-spotify`, `vgjr-kugou`, `vgjr-shazam`, `vgjr-tidal`, `vgjr-deezer` and `popcat`.
@@ -67,7 +67,7 @@ Provider IDs include `lrclib`, `betterlyrics`, `unison`, `amll-ttml-db`, `lrc-re
 Uses Apple's public iTunes API to find song information. It can return the song, artist and album IDs, artwork, Apple Music links, preview URL, duration, release date, genre, track/disc number, explicit status, pricing and other metadata. It can also return alternate editions when Apple has close matches.
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/metadata?track=Blinding%20Lights&artist=The%20Weeknd"
+curl "https://lyrics.adi.rest//api/metadata?track=Blinding%20Lights&artist=The%20Weeknd"
 ```
 
 Parameters:
@@ -88,7 +88,7 @@ Lyrics responses can include this metadata too. Metadata lookup is separate from
 Searches Apple's catalog for songs, albums, artists or music videos.
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/music/search?q=Daft%20Punk&type=artist"
+curl "https://lyrics.adi.rest/api/music/search?q=Daft%20Punk&type=artist"
 ```
 
 Parameters:
@@ -105,7 +105,7 @@ Parameters:
 Looks up an Apple/iTunes catalog ID.
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/music/lookup?id=909253&entity=album"
+curl "https://lyrics.adi.rest/api/music/lookup?id=909253&entity=album"
 ```
 
 Parameters: `id`, optional `entity`, `country` and `limit`. Entity can be `song`, `album`, `artist` or `musicVideo`.
@@ -115,7 +115,7 @@ Parameters: `id`, optional `entity`, `country` and `limit`. Entity can be `song`
 `GET /api/music/artist?id=...`
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/music/artist?id=5468295"
+curl "https://lyrics.adi.rest/api/music/artist?id=5468295"
 ```
 
 Use the Apple artist ID as `id`.
@@ -125,7 +125,7 @@ Use the Apple artist ID as `id`.
 `GET /api/music/album?id=...`
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/music/album?id=1440857781"
+curl "https://lyrics.adi.rest/api/music/album?id=1440857781"
 ```
 
 Use the Apple album ID as `id`.
@@ -135,7 +135,7 @@ Use the Apple album ID as `id`.
 `GET /api/music/song?id=...`
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/music/song?id=1440857782"
+curl "https://lyrics.adi.rest/api/music/song?id=1440857782"
 ```
 
 Use the Apple song ID as `id`.
@@ -147,7 +147,7 @@ Use the Apple song ID as `id`.
 Gets chart listings from Apple Music RSS.
 
 ```sh
-curl "https://lyrics.imreallyadi.space/api/music/top?type=albums&country=US&limit=25"
+curl "https://lyrics.adi.rest/api/music/top?type=albums&country=US&limit=25"
 ```
 
 Parameters:
