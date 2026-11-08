@@ -3,6 +3,7 @@
 Adi Lyrics is my lyrics API. It searches different lyrics providers and returns one result in a consistent format, so apps using it don't have to handle every provider separately.
 
 API: https://lyrics.adi.rest/
+
 **Please see: https://www.adi.rest/tos && https://www.adi.rest/privacy**
 
 ## Lyrics providers
